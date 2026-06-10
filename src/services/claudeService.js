@@ -52,15 +52,31 @@ export async function sendMessage(messages, systemPrompt) {
 // --- 3. Analyse la réponse : extrait le tag [JET: ...] et le masque du texte affiché ---
 const JET_RE = /\[JET:\s*([^\]]+)\]/i
 
+import { parseMjTags } from './mjTagParser'
+
+// JET_RE reste tel que tu l'as défini plus haut dans le fichier.
+
 export function parseResponse(rawText = '') {
+  // 1. Extraction du JET (logique existante, inchangée)
   const match = rawText.match(JET_RE)
-  if (!match) return { texte: rawText.trim(), jet: null }
+  let texte = rawText
+  let jet = null
 
-  const contenu = match[1].trim()
-  const ddMatch = contenu.match(/DD\s*(\d+)/i)
-  const dd = ddMatch ? parseInt(ddMatch[1], 10) : null
-  const label = contenu.replace(/DD\s*\d+/i, '').trim()   // caractéristique (+ compétence)
+  if (match) {
+    const contenu = match[1].trim()
+    const ddMatch = contenu.match(/DD\s*(\d+)/i)
+    const dd = ddMatch ? parseInt(ddMatch[1], 10) : null
+    const label = contenu.replace(/DD\s*\d+/i, '').trim()
+    jet = { label, dd }
+    texte = rawText.replace(JET_RE, '')
+  }
 
-  const texte = rawText.replace(JET_RE, '').replace(/\n{3,}/g, '\n\n').trim()
-  return { texte, jet: { label, dd } }
+  // 2. Extraction des nouveaux tags mécaniques sur le texte déjà débarrassé du JET
+  const { texte: texteNettoye, actions } = parseMjTags(texte)
+
+  return {
+    texte: texteNettoye.replace(/\n{3,}/g, '\n\n').trim(),
+    jet,
+    actions, // [] si aucun
+  }
 }
