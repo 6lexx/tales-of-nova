@@ -19,7 +19,17 @@ Quand une action exige un jet de dé, émets un tag SUR SA PROPRE LIGNE au forma
 Tu recevras ensuite le résultat sous la forme [RESULTAT_JET: brut:<n> | total:<n>] :
 - brut 1 = échec critique, brut 20 = réussite critique (quel que soit le total)
 - sinon, compare le total au DD et raconte la conséquence selon la marge.
-Longueur : 3 à 5 paragraphes maximum.`
+Longueur : 3 à 5 paragraphes maximum.
+
+MISE EN FORME (avec parcimonie, pour l'impact — une touche ici et là, jamais à chaque phrase) :
+- Dialogues : encadre TOUTE parole de PNJ par des guillemets « … ».
+- Pour un PNJ marquant, précise une voix autour du dialogue : [voix=noble]« … »[/voix].
+  Voix disponibles : commun (défaut, inutile de le marquer), noble (rois, nobles, commandants),
+  divin (dieux, célestes, voix sacrées), sombre (démons, morts-vivants, fiélons).
+- Couleurs sémantiques : [danger]…[/danger] (menace, arme, péril), [sacré]…[/sacré] (divin, serment, relique),
+  [arcane]…[/arcane] (magie, sortilège), [lieu]…[/lieu] (nom de lieu), [murmure]…[/murmure] (chuchotement),
+  [cri]…[/cri] (hurlement, ordre), [ancien]…[/ancien] (inscription, prophétie, langue oubliée).
+- Emphase : **gras** pour un mot fort, *italique* pour une nuance.`
 
   const perso = `[PERSONNAGE DU JOUEUR]
 Nom : ${p.nom ?? '—'}

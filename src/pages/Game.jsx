@@ -5,6 +5,7 @@ import { getCharacter } from '../services/characterService'
 import { getOrCreateSession, loadMessages, saveMessage, updateSession } from '../services/sessionService'
 import { buildSystemPrompt, sendMessage, parseResponse } from '../services/claudeService'
 import { lancerD20, formatPourIA } from '../services/diceService'
+import Narration from '../components/Narration'
 
 const C = {
   bg: '#0a0b0f', bgPanel: '#0f1118', bgCard: '#13161f', bgInput: '#1a1e2b',
@@ -36,6 +37,10 @@ export default function Game() {
   const [erreur, setErreur] = useState('')
   const [modal, setModal] = useState(null)
   const [dernierJet, setDernierJet] = useState(null)
+  const [phaseJet, setPhaseJet] = useState('pret')   // pret | roule | brut | total
+  const [affichageDe, setAffichageDe] = useState(null)
+  const jetRef = useRef(null)
+  const animRef = useRef(null)
   const filRef = useRef(null)
 
   // Bloc-notes
@@ -79,6 +84,8 @@ export default function Game() {
     }, 50)
     return () => clearTimeout(t)
   }, [messages, loading])
+
+  useEffect(() => () => clearInterval(animRef.current), [])
 
   // Sauvegarde des notes avec debounce 1s
   const sauvegarderNotes = useCallback((texte) => {
@@ -127,7 +134,7 @@ export default function Game() {
     const msgMJ = { role: 'assistant', content: affichage }
     setMessages([msgMJ])
     await saveMessage(s.id, 'assistant', affichage)
-    if (jet) setModal(jet)
+    if (jet) ouvrirJet(jet)
   }
 
   async function envoyer() {
@@ -148,7 +155,7 @@ export default function Game() {
       const msgMJ = { role: 'assistant', content: affichage }
       setMessages((prev) => [...prev, msgMJ])
       await saveMessage(session.id, 'assistant', affichage)
-      if (jet) setModal(jet)
+      if (jet) ouvrirJet(jet)
     } catch (e) {
       setErreur(e.message)
     } finally {
@@ -156,8 +163,16 @@ export default function Game() {
     }
   }
 
-  async function resoudreJet() {
-    if (!modal || !perso) return
+  // Ouvre un jet (réinitialise l'état d'animation)
+  function ouvrirJet(jet) {
+    setModal(jet)
+    setPhaseJet('pret')
+    setAffichageDe(null)
+  }
+
+  // Lance le dé avec une petite mise en scène
+  function lancerLeDe() {
+    if (!modal || !perso || phaseJet !== 'pret') return
     const MAP = {
       force: 'force', for: 'force',
       dexterite: 'dexterite', dex: 'dexterite',
@@ -168,9 +183,35 @@ export default function Game() {
     }
     const cle = MAP[modal.label.toLowerCase().split(/[\s(]/)[0]] || null
     const valeur = cle ? (perso[cle] || 10) : 10
-    const jet = lancerD20(mod(valeur) + 2)
-    setDernierJet({ ...jet, label: modal.label, dd: modal.dd })
+    const modificateur = mod(valeur) + bonusMaitrise(perso.niveau)
+    const jet = lancerD20(modificateur)
+    jetRef.current = { ...jet, modificateur, label: modal.label, dd: modal.dd }
+
+    // Animation : défilement de valeurs (~770 ms)
+    setPhaseJet('roule')
+    let ticks = 0
+    clearInterval(animRef.current)
+    animRef.current = setInterval(() => {
+      setAffichageDe(1 + Math.floor(Math.random() * 20))
+      ticks += 1
+      if (ticks >= 11) {
+        clearInterval(animRef.current)
+        setAffichageDe(jet.brut)
+        setPhaseJet('brut')
+        setTimeout(() => setPhaseJet('total'), 500)   // le bonus apparaît à côté
+        setTimeout(() => finaliserJet(), 1500)        // puis on envoie au MJ
+      }
+    }, 70)
+  }
+
+  // Envoie le résultat au MJ et enchaîne la narration
+  async function finaliserJet() {
+    const jet = jetRef.current
+    if (!jet) return
+    setDernierJet({ brut: jet.brut, total: jet.total, critEchec: jet.critEchec, critReussite: jet.critReussite, label: jet.label, dd: jet.dd })
     setModal(null)
+    setPhaseJet('pret')
+    setAffichageDe(null)
 
     const contenu = formatPourIA(jet)
     const nouveauxMessages = [...messages, { role: 'user', content: contenu }]
@@ -184,7 +225,7 @@ export default function Game() {
       const { texte: affichage, jet: prochainJet } = parseResponse(texte)
       setMessages((prev) => [...prev, { role: 'assistant', content: affichage }])
       await saveMessage(session.id, 'assistant', affichage)
-      if (prochainJet) setModal(prochainJet)
+      if (prochainJet) ouvrirJet(prochainJet)
     } catch (e) {
       setErreur(e.message)
     } finally {
@@ -262,7 +303,9 @@ export default function Game() {
           {messages.map((m, i) => (
             <div key={i} style={{ ...S.bulle, ...(m.role === 'user' ? S.bulleJoueur : S.bulleMJ) }}>
               {m.role === 'assistant' && <div style={S.mjLabel}>✦ Maître du Jeu</div>}
-              <p style={S.bulleTexte}>{m.content}</p>
+              {m.role === 'assistant'
+                ? <div style={S.bulleTexte}><Narration text={m.content} /></div>
+                : <p style={S.bulleTexte}>{m.content}</p>}
             </div>
           ))}
           {loading && (
@@ -273,6 +316,41 @@ export default function Game() {
           )}
         </div>
         {erreur && <div style={S.erreur}>{erreur}</div>}
+
+        {/* ── PANNEAU DE DÉS (ancré, non bloquant) ── */}
+        {modal && (
+          <div style={S.diceDock}>
+            <div style={S.diceInfo}>
+              <span style={S.diceTitre}>Jet de {modal.label}</span>
+              {modal.dd && <span style={S.diceDD}>DD {modal.dd}</span>}
+            </div>
+
+            {phaseJet === 'pret' ? (
+              <button style={S.diceBtn} onClick={lancerLeDe}>
+                <Dice6 size={18} style={{ marginRight: 8 }} /> Lancer le d20
+              </button>
+            ) : (
+              <div style={S.diceResultat}>
+                <div style={{ ...S.diceBrut, color:
+                  (phaseJet !== 'roule' && jetRef.current?.critReussite) ? C.gold :
+                  (phaseJet !== 'roule' && jetRef.current?.critEchec) ? C.red : C.textPrime,
+                  opacity: phaseJet === 'roule' ? 0.6 : 1 }}>
+                  {affichageDe}
+                </div>
+                {phaseJet === 'total' && (
+                  <>
+                    <span style={S.dicePlus}>{fmtMod(jetRef.current.modificateur)}</span>
+                    <span style={S.diceEgal}>=</span>
+                    <span style={S.diceTotal}>{jetRef.current.total}</span>
+                    {jetRef.current.critReussite && <span style={S.diceCritR}>réussite critique</span>}
+                    {jetRef.current.critEchec && <span style={S.diceCritE}>échec critique</span>}
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         <div style={S.saisieZone}>
           <textarea style={S.saisie} value={saisie} onChange={(e) => setSaisie(e.target.value)}
             onKeyDown={handleKey} placeholder="Décrivez votre action… (Entrée pour envoyer)"
@@ -489,22 +567,6 @@ export default function Game() {
           </div>
         </div>
       )}
-
-      {/* ── MODALE DÉS ── */}
-      {modal && (
-        <div style={S.modalOverlay}>
-          <div style={S.modalBox}>
-            <div style={S.modalEyebrow}>✦ Jet demandé ✦</div>
-            <h2 style={S.modalTitre}>{modal.label}</h2>
-            {modal.dd && <p style={S.modalDD}>Difficulté : DD {modal.dd}</p>}
-            <p style={S.modalSub}>Lance le dé pour connaître ton destin.</p>
-            <button style={S.modalBtn} onClick={resoudreJet} disabled={loading}>
-              <Dice6 size={20} style={{ marginRight: 8 }} />
-              {loading ? 'Le MJ juge…' : 'Lancer le d20'}
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   )
 }
@@ -531,7 +593,7 @@ function Row({ label, val, multiline }) {
 }
 
 const CSS = `
-  @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700&family=Inter:wght@400;500;600&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700&family=Cinzel+Decorative:wght@700&family=EB+Garamond:ital@0;1&family=Grenze+Gotisch:wght@500&family=Inter:wght@400;500;600&display=swap');
   * { box-sizing: border-box; }
   ::placeholder { color: #4a4a6a; }
   textarea:focus { outline: none; border-color: #4a3a6e !important; }
@@ -574,6 +636,19 @@ const S = {
   bulleTexte: { margin: 0, fontSize: 15, color: '#e8e0f0', whiteSpace: 'pre-wrap' },
   erreur: { margin: '0 24px 8px', padding: '10px 14px', background: '#2a1010', border: '1px solid #b84040', borderRadius: 8, fontSize: 13, color: '#b84040' },
   saisieZone: { display: 'flex', gap: 10, padding: '14px 20px', borderTop: '1px solid #252a3a', background: '#0f1118' },
+  // Panneau de dés ancré
+  diceDock: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, margin: '0 20px 10px', padding: '12px 18px', background: 'linear-gradient(135deg, #1a1228 0%, #14101c 100%)', border: '1px solid #4a3a6e', borderRadius: 12 },
+  diceInfo: { display: 'flex', flexDirection: 'column', gap: 2 },
+  diceTitre: { fontSize: 14, fontFamily: "'Cinzel', serif", color: '#e8e0f0' },
+  diceDD: { fontSize: 12, color: '#c9a84c' },
+  diceBtn: { display: 'inline-flex', alignItems: 'center', padding: '11px 22px', borderRadius: 10, border: 'none', background: 'linear-gradient(135deg, #c9a84c 0%, #8a6020 100%)', color: '#1a1206', fontSize: 14.5, fontWeight: 700, fontFamily: "'Cinzel', serif", letterSpacing: 0.5, cursor: 'pointer', boxShadow: '0 4px 16px rgba(201,168,76,.25)' },
+  diceResultat: { display: 'flex', alignItems: 'center', gap: 12 },
+  diceBrut: { fontSize: 34, fontWeight: 700, fontFamily: "'Cinzel', serif", minWidth: 44, textAlign: 'center', transition: 'color .2s' },
+  dicePlus: { fontSize: 17, color: '#8a8aaa', fontFamily: 'monospace' },
+  diceEgal: { fontSize: 15, color: '#4a4a6a' },
+  diceTotal: { fontSize: 26, fontWeight: 700, color: '#c9a84c', fontFamily: "'Cinzel', serif" },
+  diceCritR: { fontSize: 11, color: '#c9a84c', fontFamily: "'Cinzel', serif", letterSpacing: 1, marginLeft: 4 },
+  diceCritE: { fontSize: 11, color: '#b84040', fontFamily: "'Cinzel', serif", letterSpacing: 1, marginLeft: 4 },
   saisie: { flex: 1, padding: '11px 14px', background: '#1a1e2b', border: '1px solid #252a3a', borderRadius: 10, color: '#e8e0f0', fontSize: 14, fontFamily: "'Inter', sans-serif", resize: 'none', lineHeight: 1.5 },
   sendBtn: { width: 46, flexShrink: 0, background: 'linear-gradient(135deg, #7b5ea7 0%, #3d2060 100%)', border: 'none', borderRadius: 10, color: '#e8e0f0', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' },
   sideRight: { display: 'flex', flexDirection: 'column', background: '#0f1118', borderLeft: '1px solid #252a3a', overflowY: 'auto' },
