@@ -208,3 +208,102 @@
   cursor: pointer;
 }
 .menu-logout:hover { color: #e08a8a; }
+
+/* ── Campagnes ── */
+.camp-liste {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.camp-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 18px 20px;
+  text-align: left;
+  border: 1px solid #252a3a;
+  border-radius: 14px;
+  background: #13161f;
+  color: inherit;
+  cursor: pointer;
+  width: 100%;
+  transition: border-color .15s, box-shadow .15s;
+}
+.camp-card:hover {
+  border-color: #c9a84c;
+  box-shadow: 0 4px 20px rgba(201,168,76,.1);
+}
+
+.camp-card-left {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  flex: 1;
+  min-width: 0;
+}
+
+.camp-perso-icone {
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  border-radius: 10px;
+  background: #1a1e2b;
+  border: 1px solid #252a3a;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.camp-perso-nom {
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 17px;
+  color: #e8e0f0;
+  margin-bottom: 2px;
+}
+.camp-perso-meta { font-size: 12.5px; color: #8a8aaa; }
+.camp-lieu { font-size: 12px; color: #7b5ea7; margin-top: 4px; }
+.camp-resume {
+  font-size: 12.5px;
+  color: #8a8aaa;
+  margin-top: 4px;
+  font-style: italic;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 380px;
+}
+.camp-date { font-size: 11px; color: #4a4a6a; margin-top: 6px; }
+
+.camp-card-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.camp-pv {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #8a8aaa;
+}
+.camp-pv-bar {
+  width: 70px;
+  height: 5px;
+  background: #1a1e2b;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.camp-reprendre {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #c9a84c;
+}

@@ -76,3 +76,22 @@ export async function updateSession(sessionId, patch) {
     .eq('id', sessionId)
   if (error) throw error
 }
+
+// Liste toutes les campagnes de l'utilisateur avec perso + dernière session
+export async function listCampagnes() {
+  const { data, error } = await supabase
+    .from('campaigns')
+    .select(`
+      id, titre, created_at,
+      characters ( id, nom, espece, classe, niveau, pv_actuels, pv_max ),
+      game_sessions ( id, resume, lieu_actuel, created_at )
+    `)
+    .order('created_at', { ascending: false })
+  if (error) throw error
+
+  return data.map((c) => {
+    const sessions = Array.isArray(c.game_sessions) ? c.game_sessions : []
+    const derniere = sessions.sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0] || null
+    return { ...c, derniere_session: derniere, game_sessions: undefined }
+  })
+}

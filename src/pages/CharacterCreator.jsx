@@ -81,11 +81,47 @@ const COMPETENCES = {
 
 const LANGUES = ["Commun", "Elfique", "Nain", "Orc", "Draconique", "Infernal", "Céleste", "Sylvestre"];
 
-/* Point-buy D&D : coût par valeur */
+/* Point-buy D&D : coût par valeur (table "Ability Score Point Cost") */
 const COST = { 8: 0, 9: 1, 10: 2, 11: 3, 12: 4, 13: 5, 14: 7, 15: 9 };
 const POOL = 27;
 const mod = (v) => Math.floor((v - 10) / 2);
 const fmtMod = (m) => (m >= 0 ? `+${m}` : `${m}`);
+
+/* Tableau standard (PHB) — 6 valeurs à répartir */
+const TABLEAU_STANDARD = [15, 14, 13, 12, 10, 8];
+
+/* Bonus de maîtrise par niveau (table "Character Advancement"), index = niveau-1 */
+const MAITRISE_NIVEAU = [2,2,2,2,3,3,3,3,4,4,4,4,5,5,5,5,6,6,6,6];
+const bonusMaitrise = (niv) => MAITRISE_NIVEAU[Math.min(20, Math.max(1, niv || 1)) - 1];
+
+/* XP requis pour atteindre chaque niveau (table "Character Advancement") */
+const XP_NIVEAU = [0,300,900,2700,6500,14000,23000,34000,48000,64000,85000,100000,120000,140000,165000,195000,225000,265000,305000,355000];
+
+/* Caractéristique importante par classe (table "Ability Score Summary") */
+const CARAC_IMPORTANTE = {
+  guerrier: ["FOR"],   // fighter → Force
+  mage: ["INT"],       // wizard → Intelligence
+  voleur: ["DEX"],     // rogue → Dextérité
+  clerc: ["SAG"],      // cleric → Sagesse
+};
+
+/* Lancer 4d6 en gardant les 3 meilleurs */
+const lancer4d6 = () => {
+  const des = Array.from({ length: 4 }, () => 1 + Math.floor(Math.random() * 6)).sort((a, b) => b - a);
+  return des[0] + des[1] + des[2];
+};
+const lancerSix = () => Array.from({ length: 6 }, lancer4d6);
+
+/* Valeurs encore disponibles dans un pool, en tenant compte de celles déjà assignées */
+function valeursDisponibles(pool, stats, statCourant, STATS) {
+  const restant = {};
+  pool.forEach((v) => { restant[v] = (restant[v] || 0) + 1; });
+  STATS.forEach((s) => {
+    const v = stats[s.id];
+    if (s.id !== statCourant && v != null && restant[v] != null) restant[v]--;
+  });
+  return Object.entries(restant).filter(([, n]) => n > 0).map(([v]) => Number(v)).sort((a, b) => b - a);
+}
 
 /* ── ONGLET HISTOIRE : champs guidés + amorces ────────────── */
 const CHAMPS_HISTOIRE = [
@@ -132,6 +168,8 @@ export default function CharacterCreator() {
   const [id, setId] = useState({ nom: "", espece: null, classe: null, sousClasse: "", historique: "", alignement: "" });
   const [app, setApp] = useState({ portrait: 0, taille: "Moyenne", cheveux: "#6a4a2a", yeux: "#3a8a8a", peau: "#c9a072", desc: "" });
   const [stats, setStats] = useState({ FOR: 8, DEX: 8, CON: 8, INT: 8, SAG: 8, CHA: 8 });
+  const [methode, setMethode] = useState("achat");   // achat | standard | lancer
+  const [lancers, setLancers] = useState([]);        // 6 valeurs pour la méthode "lancer"
   const [bonusChoisis, setBonusChoisis] = useState([]); // demi-elfe : +1 au choix ×2
   const [skills, setSkills] = useState([]);
   const [langues, setLangues] = useState(["Commun"]);
@@ -146,7 +184,10 @@ export default function CharacterCreator() {
   const classe = CLASSES.find((c) => c.id === id.classe);
   const espece = ESPECES.find((e) => e.id === id.espece);
 
-  const used = Object.values(stats).reduce((s, v) => s + COST[v], 0);
+  // Coût point-buy (uniquement en méthode "achat")
+  const used = methode === "achat"
+    ? Object.values(stats).reduce((s, v) => s + (COST[v] || 0), 0)
+    : 0;
   const restant = POOL - used;
 
   const adjust = (k, d) => setStats((p) => {
@@ -156,6 +197,21 @@ export default function CharacterCreator() {
     if (newUsed > POOL) return p;
     return { ...p, [k]: v };
   });
+
+  // Pool de valeurs pour les méthodes standard / lancer
+  const pool = methode === "standard" ? TABLEAU_STANDARD : methode === "lancer" ? lancers : [];
+
+  // Changement de méthode : on remet à zéro l'assignation
+  const changerMethode = (m) => {
+    setMethode(m);
+    if (m === "achat") setStats({ FOR: 8, DEX: 8, CON: 8, INT: 8, SAG: 8, CHA: 8 });
+    else setStats({ FOR: null, DEX: null, CON: null, INT: null, SAG: null, CHA: null });
+    setLancers(m === "lancer" ? lancerSix() : []);
+  };
+
+  const assignerStat = (sid, valeur) => {
+    setStats((p) => ({ ...p, [sid]: valeur === "" ? null : Number(valeur) }));
+  };
 
   const toggle = (arr, set, val, max) => {
     if (arr.includes(val)) set(arr.filter((x) => x !== val));
@@ -171,14 +227,17 @@ export default function CharacterCreator() {
   const racialFixed = espece?.bonusStats || {};
   const libres = espece?.bonusLibres || 0;
   const bonusDe = (sid) => (racialFixed[sid] || 0) + (bonusChoisis.includes(sid) ? 1 : 0);
-  const valeurFinale = (sid) => stats[sid] + bonusDe(sid);
+  const valeurFinale = (sid) => (stats[sid] == null ? null : stats[sid] + bonusDe(sid));
 
-  /* Stats dérivées (niveau 1) — calculées sur les valeurs finales */
-  const pdv = classe ? classe.de + mod(valeurFinale("CON")) : "—";
-  const ca = 10 + mod(valeurFinale("DEX"));
-  const init = fmtMod(mod(valeurFinale("DEX")));
-  const perceptionP = 10 + mod(valeurFinale("SAG"));
-  const maitrise = "+2";
+  /* Stats dérivées (niveau 1) — calculées sur les valeurs finales (— si non assignées) */
+  const finCon = valeurFinale("CON");
+  const finDex = valeurFinale("DEX");
+  const finSag = valeurFinale("SAG");
+  const pdv = (classe && finCon != null) ? classe.de + mod(finCon) : "—";
+  const ca = finDex != null ? 10 + mod(finDex) : "—";
+  const init = finDex != null ? fmtMod(mod(finDex)) : "—";
+  const perceptionP = finSag != null ? 10 + mod(finSag) : "—";
+  const maitrise = fmtMod(bonusMaitrise(1));   // niveau 1 → +2 (table de progression)
 
   /* Génération assistée — appel réel à l'API via l'edge function */
   const genererHistoire = async () => {
@@ -211,6 +270,11 @@ export default function CharacterCreator() {
     if (!id.nom || !id.espece || !id.classe) {
       setForgeErreur("Remplis au moins le nom, l'espèce et la classe.");
       setTab("identite");
+      return;
+    }
+    if (["FOR", "DEX", "CON", "INT", "SAG", "CHA"].some((k) => stats[k] == null)) {
+      setForgeErreur("Assigne une valeur à chaque caractéristique.");
+      setTab("attributs");
       return;
     }
     setForgeErreur("");
@@ -353,11 +417,44 @@ export default function CharacterCreator() {
           {/* ── ATTRIBUTS ── */}
           {tab === "attributs" && (
             <div style={S.col}>
-              <div style={S.pointsBar}>
-                <span style={S.pointsLbl}>Points de répartition restants</span>
-                <span style={{ ...S.pointsVal, color: restant === 0 ? C.gold : C.textPrime }}>{restant}<span style={S.pointsMax}> / {POOL}</span></span>
+              {/* Sélecteur de méthode (PHB étape 3) */}
+              <div style={S.methodeRow}>
+                {[
+                  ["achat", "Achat de points"],
+                  ["standard", "Tableau standard"],
+                  ["lancer", "Lancer de dés"],
+                ].map(([m, lbl]) => (
+                  <button key={m} onClick={() => changerMethode(m)}
+                    style={{ ...S.methodeBtn, ...(methode === m ? S.methodeBtnOn : {}) }}>{lbl}</button>
+                ))}
               </div>
 
+              {/* Achat de points : compteur */}
+              {methode === "achat" && (
+                <div style={S.pointsBar}>
+                  <span style={S.pointsLbl}>Points de répartition restants</span>
+                  <span style={{ ...S.pointsVal, color: restant === 0 ? C.gold : C.textPrime }}>{restant}<span style={S.pointsMax}> / {POOL}</span></span>
+                </div>
+              )}
+
+              {/* Lancer : valeurs obtenues + relance */}
+              {methode === "lancer" && (
+                <div style={S.libresBox}>
+                  <div style={S.libresLbl}>Valeurs obtenues (4d6, on garde les 3 meilleurs)</div>
+                  <div style={S.tagRow}>
+                    {lancers.map((v, i) => <span key={i} style={S.tagOnGold}>{v}</span>)}
+                  </div>
+                  <button style={{ ...S.methodeBtn, marginTop: 10 }} onClick={() => changerMethode("lancer")}>
+                    Relancer les dés
+                  </button>
+                </div>
+              )}
+
+              {methode === "standard" && (
+                <p style={S.help}>Répartis les valeurs <b style={{ color: C.gold }}>15, 14, 13, 12, 10, 8</b> entre tes caractéristiques.</p>
+              )}
+
+              {/* Bonus d'espèce à répartir (demi-elfe) */}
               {libres > 0 && (
                 <div style={S.libresBox}>
                   <div style={S.libresLbl}>Bonus d'espèce à répartir — +1 × {libres}</div>
@@ -374,22 +471,35 @@ export default function CharacterCreator() {
               {STATS.map((s) => {
                 const base = stats[s.id];
                 const bonus = bonusDe(s.id);
-                const fin = base + bonus;
-                const m = mod(fin);
+                const fin = base == null ? null : base + bonus;
+                const m = fin == null ? null : mod(fin);
+                const importante = (CARAC_IMPORTANTE[id.classe] || []).includes(s.id);
                 return (
                   <div key={s.id} style={S.statRow}>
                     <div style={S.statInfo}>
                       <span style={S.statName}>{s.nom}</span>
-                      {bonus > 0 && <span style={S.statRacial}>+{bonus} d'espèce</span>}
+                      <div style={{ display: "flex", gap: 8 }}>
+                        {importante && <span style={S.statImportante}>★ clé pour {classe?.nom}</span>}
+                        {bonus > 0 && <span style={S.statRacial}>+{bonus} d'espèce</span>}
+                      </div>
                     </div>
                     <div style={S.statRight}>
-                      <span style={S.statModBadge}>{fmtMod(m)}</span>
-                      <div style={S.stepper}>
-                        <button style={S.stepBtn} onClick={() => adjust(s.id, -1)}><Minus size={14} /></button>
-                        <span style={S.statVal}>{base}</span>
-                        <button style={S.stepBtn} onClick={() => adjust(s.id, 1)}><Plus size={14} /></button>
-                      </div>
-                      <span style={S.statFinal}>= {fin}</span>
+                      <span style={S.statModBadge}>{m == null ? "—" : fmtMod(m)}</span>
+                      {methode === "achat" ? (
+                        <div style={S.stepper}>
+                          <button style={S.stepBtn} onClick={() => adjust(s.id, -1)}><Minus size={14} /></button>
+                          <span style={S.statVal}>{base}</span>
+                          <button style={S.stepBtn} onClick={() => adjust(s.id, 1)}><Plus size={14} /></button>
+                        </div>
+                      ) : (
+                        <select style={S.statSelect} value={base ?? ""} onChange={(e) => assignerStat(s.id, e.target.value)}>
+                          <option value="">—</option>
+                          {valeursDisponibles(pool, stats, s.id, STATS).map((v, i) => (
+                            <option key={`${v}-${i}`} value={v}>{v}</option>
+                          ))}
+                        </select>
+                      )}
+                      <span style={S.statFinal}>{fin == null ? "" : `= ${fin}`}</span>
                     </div>
                   </div>
                 );
@@ -515,8 +625,8 @@ export default function CharacterCreator() {
                     const fin = valeurFinale(s.id);
                     return (
                       <div key={s.id} style={S.recapStat}>
-                        <span style={S.recapStatVal}>{fin}</span>
-                        <span style={S.recapStatMod}>{fmtMod(mod(fin))}</span>
+                        <span style={S.recapStatVal}>{fin ?? "—"}</span>
+                        <span style={S.recapStatMod}>{fin == null ? "—" : fmtMod(mod(fin))}</span>
                         <span style={S.recapStatLbl}>{s.id}</span>
                       </div>
                     );
@@ -671,6 +781,11 @@ const S = {
   pointsMax: { fontSize: 16, color: "#c8b8e0", fontWeight: 400 },
 
   libresBox: { padding: "14px 16px", background: C.bgCard, border: `1px solid ${C.borderGlow}`, borderRadius: 10 },
+  methodeRow: { display: "flex", gap: 8 },
+  methodeBtn: { flex: 1, padding: "10px 12px", borderRadius: 9, background: C.bgCard, border: `1px solid ${C.border}`, color: C.textSub, fontSize: 13, fontWeight: 500, fontFamily: "'Inter', sans-serif" },
+  methodeBtnOn: { borderColor: C.gold, background: "#1a160f", color: C.gold },
+  statSelect: { width: 72, padding: "7px 8px", background: C.bgInput, border: `1px solid ${C.border}`, borderRadius: 8, color: C.textPrime, fontSize: 15, fontFamily: "'Inter', sans-serif", textAlign: "center" },
+  statImportante: { fontSize: 10, color: C.gold },
   libresLbl: { fontSize: 12.5, color: C.teal, marginBottom: 10, fontFamily: "'Cinzel', serif", letterSpacing: 1 },
 
   statRow: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "13px 16px", background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 10 },

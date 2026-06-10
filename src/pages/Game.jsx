@@ -1,8 +1,8 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Heart, Shield, Zap, Star, Swords, ScrollText, Dice6, Send, ChevronLeft } from 'lucide-react'
+import { Heart, Shield, Zap, Star, Swords, ScrollText, Dice6, Send, ChevronLeft, BookOpen, X, GripHorizontal, User } from 'lucide-react'
 import { getCharacter } from '../services/characterService'
-import { getOrCreateSession, loadMessages, saveMessage } from '../services/sessionService'
+import { getOrCreateSession, loadMessages, saveMessage, updateSession } from '../services/sessionService'
 import { buildSystemPrompt, sendMessage, parseResponse } from '../services/claudeService'
 import { lancerD20, formatPourIA } from '../services/diceService'
 
@@ -19,6 +19,9 @@ const C = {
 
 const mod = (v) => Math.floor((v - 10) / 2)
 const fmtMod = (m) => (m >= 0 ? `+${m}` : `${m}`)
+// Bonus de maîtrise par niveau (table de progression PHB)
+const MAITRISE_NIVEAU = [2,2,2,2,3,3,3,3,4,4,4,4,5,5,5,5,6,6,6,6]
+const bonusMaitrise = (niv) => MAITRISE_NIVEAU[Math.min(20, Math.max(1, niv || 1)) - 1]
 
 export default function Game() {
   const { id: characterId } = useParams()
@@ -35,6 +38,20 @@ export default function Game() {
   const [dernierJet, setDernierJet] = useState(null)
   const filRef = useRef(null)
 
+  // Bloc-notes
+  const [noteOpen, setNoteOpen] = useState(false)
+  const [noteTexte, setNoteTexte] = useState('')
+  const [notePos, setNotePos] = useState({ x: 80, y: 80 })
+  const [noteSaving, setNoteSaving] = useState(false)
+  const dragRef = useRef(null)
+  const saveTimerRef = useRef(null)
+  const sessionRef = useRef(null)
+
+  // Fiche personnage flottante
+  const [ficheOpen, setFicheOpen] = useState(false)
+  const [fichePos, setFichePos] = useState({ x: 260, y: 60 })
+  const [ficheTab, setFicheTab] = useState('stats')
+
   useEffect(() => {
     async function init() {
       try {
@@ -42,6 +59,8 @@ export default function Game() {
         setPerso(p)
         const s = await getOrCreateSession(characterId)
         setSession(s)
+        sessionRef.current = s
+        setNoteTexte(s.notes || '')
         const msgs = await loadMessages(s.id)
         setMessages(msgs.map((m) => ({ role: m.role, content: m.content, id: m.id })))
         if (msgs.length === 0) await lancerPremierMessage(p, s)
@@ -55,8 +74,50 @@ export default function Game() {
   }, [characterId])
 
   useEffect(() => {
-    filRef.current?.scrollTo({ top: filRef.current.scrollHeight, behavior: 'smooth' })
-  }, [messages])
+    const t = setTimeout(() => {
+      filRef.current?.scrollTo({ top: filRef.current.scrollHeight, behavior: 'smooth' })
+    }, 50)
+    return () => clearTimeout(t)
+  }, [messages, loading])
+
+  // Sauvegarde des notes avec debounce 1s
+  const sauvegarderNotes = useCallback((texte) => {
+    clearTimeout(saveTimerRef.current)
+    setNoteSaving(true)
+    saveTimerRef.current = setTimeout(async () => {
+      if (sessionRef.current) {
+        await updateSession(sessionRef.current.id, { notes: texte })
+      }
+      setNoteSaving(false)
+    }, 1000)
+  }, [])
+
+  const onNoteChange = (e) => {
+    setNoteTexte(e.target.value)
+    sauvegarderNotes(e.target.value)
+  }
+
+  // Drag de la fenêtre bloc-notes
+  const startDrag = (e) => {
+    e.preventDefault()
+    const startX = e.clientX - notePos.x
+    const startY = e.clientY - notePos.y
+    const onMove = (ev) => setNotePos({ x: ev.clientX - startX, y: ev.clientY - startY })
+    const onUp = () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp) }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
+
+  // Drag de la fenêtre fiche personnage
+  const startDragFiche = (e) => {
+    e.preventDefault()
+    const startX = e.clientX - fichePos.x
+    const startY = e.clientY - fichePos.y
+    const onMove = (ev) => setFichePos({ x: ev.clientX - startX, y: ev.clientY - startY })
+    const onUp = () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp) }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
 
   async function lancerPremierMessage(p, s) {
     const system = buildSystemPrompt(p, s)
@@ -147,8 +208,8 @@ export default function Game() {
 
       {/* ── COLONNE GAUCHE ── */}
       <aside style={S.sideLeft}>
-        <button style={S.retour} onClick={() => navigate('/personnages')}>
-          <ChevronLeft size={15} /> Personnages
+        <button style={S.retour} onClick={() => navigate('/campagnes')}>
+          <ChevronLeft size={15} /> Campagnes
         </button>
         {perso && <>
           <div style={S.persoNom}>{perso.nom}</div>
@@ -171,7 +232,7 @@ export default function Game() {
           <div style={S.derivees}>
             <Derivee icon={<Shield size={13} color={C.teal} />} label="CA" val={10 + mod(perso.dexterite || 10)} />
             <Derivee icon={<Zap size={13} color={C.gold} />} label="Init" val={fmtMod(mod(perso.dexterite || 10))} />
-            <Derivee icon={<Star size={13} color={C.violet} />} label="Maîtrise" val="+2" />
+            <Derivee icon={<Star size={13} color={C.violet} />} label="Maîtrise" val={fmtMod(bonusMaitrise(perso.niveau))} />
           </div>
           {dernierJet && (
             <div style={S.jetResume}>
@@ -188,6 +249,10 @@ export default function Game() {
               {dernierJet.critEchec && <div style={{ color: C.red, textAlign: 'center', fontSize: 12, marginTop: 6 }}>✦ Échec critique !</div>}
             </div>
           )}
+          <button style={S.ficheBtn} onClick={() => setFicheOpen((v) => !v)}>
+            <User size={13} />
+            {ficheOpen ? 'Fermer la fiche' : 'Consulter la fiche'}
+          </button>
         </>}
       </aside>
 
@@ -229,7 +294,201 @@ export default function Game() {
           <div style={S.rightTitle}><Swords size={14} /> Inventaire</div>
           <p style={S.rightEmpty}>Inventaire vide.</p>
         </div>
+        <div style={S.rightSection}>
+          <button style={S.noteBtn} onClick={() => setNoteOpen((v) => !v)}>
+            <BookOpen size={14} />
+            {noteOpen ? 'Fermer les notes' : 'Bloc-notes'}
+          </button>
+        </div>
       </aside>
+
+      {/* ── BLOC-NOTES FLOTTANT ── */}
+      {noteOpen && (
+        <div style={{ ...S.noteWindow, left: notePos.x, top: notePos.y }} ref={dragRef}>
+          <div style={S.noteTitleBar} onMouseDown={startDrag}>
+            <span style={S.noteTitleTxt}><GripHorizontal size={13} style={{ marginRight: 6, opacity: 0.5 }} />Bloc-notes</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              {noteSaving && <span style={S.noteSaving}>Sauvegarde…</span>}
+              <button style={S.noteClose} onClick={() => setNoteOpen(false)}><X size={14} /></button>
+            </div>
+          </div>
+          <textarea
+            style={S.noteArea}
+            value={noteTexte}
+            onChange={onNoteChange}
+            placeholder="Tes notes de campagne, PNJ rencontrés, indices…"
+            spellCheck={false}
+          />
+        </div>
+      )}
+
+      {/* ── FICHE PERSONNAGE FLOTTANTE ── */}
+      {ficheOpen && perso && (
+        <div style={{ ...S.ficheWindow, left: fichePos.x, top: fichePos.y }}>
+          {/* Barre de titre draggable */}
+          <div style={S.ficheTitleBar} onMouseDown={startDragFiche}>
+            <span style={S.ficheTitleTxt}><GripHorizontal size={13} style={{ marginRight: 6, opacity: 0.5 }} />{perso.nom}</span>
+            <button style={S.noteClose} onClick={() => setFicheOpen(false)}><X size={14} /></button>
+          </div>
+          {/* Onglets */}
+          <div style={S.ficheTabs}>
+            {[['stats', 'Stats'], ['competences', 'Compétences'], ['histoire', 'Histoire'], ['classe', 'Classe']].map(([id, lbl]) => (
+              <button key={id} style={{ ...S.ficheTab, ...(ficheTab === id ? S.ficheTabActive : {}) }}
+                onClick={() => setFicheTab(id)}>{lbl}</button>
+            ))}
+          </div>
+          {/* Contenu */}
+          <div style={S.ficheBody}>
+
+            {/* STATS */}
+            {ficheTab === 'stats' && (
+              <div style={S.ficheCol}>
+                <div style={S.ficheSection}>
+                  <div style={S.ficheSectionTitle}>Identité</div>
+                  <Row label="Espèce" val={perso.espece} />
+                  <Row label="Classe" val={perso.classe} />
+                  <Row label="Niveau" val={perso.niveau} />
+                  {perso.fiche?.alignement && <Row label="Alignement" val={perso.fiche.alignement} />}
+                  {perso.historique && <Row label="Historique" val={perso.historique} />}
+                </div>
+                <div style={S.ficheSection}>
+                  <div style={S.ficheSectionTitle}>Caractéristiques</div>
+                  <div style={S.ficheStatsGrid}>
+                    {[['FOR', perso.force], ['DEX', perso.dexterite], ['CON', perso.constitution],
+                      ['INT', perso.intelligence], ['SAG', perso.sagesse], ['CHA', perso.charisme]].map(([lbl, val]) => (
+                      <div key={lbl} style={S.ficheStatCell}>
+                        <span style={S.ficheStatVal}>{val ?? '—'}</span>
+                        <span style={S.ficheStatMod}>{val ? fmtMod(mod(val)) : '—'}</span>
+                        <span style={S.ficheStatLbl}>{lbl}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div style={S.ficheSection}>
+                  <div style={S.ficheSectionTitle}>Stats dérivées</div>
+                  <Row label="Points de vie" val={`${perso.pv_actuels} / ${perso.pv_max}`} />
+                  <Row label="Classe d'armure" val={10 + mod(perso.dexterite || 10)} />
+                  <Row label="Initiative" val={fmtMod(mod(perso.dexterite || 10))} />
+                  <Row label="Maîtrise" val={fmtMod(bonusMaitrise(perso.niveau))} />
+                  <Row label="Perception passive" val={10 + mod(perso.sagesse || 10)} />
+                  <Row label="Vitesse" val="9 m" />
+                </div>
+                {perso.fiche?.langues?.length > 0 && (
+                  <div style={S.ficheSection}>
+                    <div style={S.ficheSectionTitle}>Langues</div>
+                    <p style={S.fichePara}>{perso.fiche.langues.join(', ')}</p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* COMPÉTENCES */}
+            {ficheTab === 'competences' && (
+              <div style={S.ficheCol}>
+                {perso.fiche?.competences?.length > 0 && (
+                  <div style={S.ficheSection}>
+                    <div style={S.ficheSectionTitle}>Compétences maîtrisées</div>
+                    <div style={S.ficheChips}>
+                      {perso.fiche.competences.map((c) => (
+                        <span key={c} style={S.ficheChip}>{c}</span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <div style={S.ficheSection}>
+                  <div style={S.ficheSectionTitle}>Jets de sauvegarde maîtrisés</div>
+                  {(() => {
+                    const SAUV = { guerrier: ['FOR', 'CON'], mage: ['INT', 'SAG'], voleur: ['DEX', 'INT'], clerc: ['SAG', 'CHA'] }
+                    const sauv = SAUV[(perso.classe || '').toLowerCase()] || []
+                    return sauv.length > 0
+                      ? <div style={S.ficheChips}>{sauv.map((s) => <span key={s} style={S.ficheChipGold}>{s}</span>)}</div>
+                      : <p style={S.fichePara}>—</p>
+                  })()}
+                </div>
+                {perso.fiche?.personnalite && Object.values(perso.fiche.personnalite).some(Boolean) && (
+                  <div style={S.ficheSection}>
+                    <div style={S.ficheSectionTitle}>Personnalité</div>
+                    {[['trait', 'Trait'], ['ideal', 'Idéal'], ['lienPerso', 'Lien'], ['defaut', 'Défaut']].map(([k, lbl]) =>
+                      perso.fiche.personnalite[k] ? <Row key={k} label={lbl} val={perso.fiche.personnalite[k]} multiline /> : null
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* HISTOIRE */}
+            {ficheTab === 'histoire' && (
+              <div style={S.ficheCol}>
+                {perso.fiche?.themes?.length > 0 && (
+                  <div style={S.ficheSection}>
+                    <div style={S.ficheSectionTitle}>Thèmes narratifs</div>
+                    <div style={S.ficheChips}>
+                      {perso.fiche.themes.map((t) => <span key={t} style={S.ficheChipGold}>{t}</span>)}
+                    </div>
+                  </div>
+                )}
+                {perso.fiche?.histoire && (
+                  <div style={S.ficheSection}>
+                    {[
+                      ['origine', 'Origine'],
+                      ['declencheur', 'Évènement déclencheur'],
+                      ['motivation', 'Motivation'],
+                      ['lien', 'Lien vivant'],
+                      ['secret', 'Secret / Fardeau'],
+                      ['faille', 'Peur / Faille'],
+                    ].map(([k, lbl]) =>
+                      perso.fiche.histoire[k]
+                        ? <div key={k} style={{ marginBottom: 14 }}>
+                            <div style={S.ficheRowLabel}>{lbl}</div>
+                            <p style={S.fichePara}>{perso.fiche.histoire[k]}</p>
+                          </div>
+                        : null
+                    )}
+                  </div>
+                )}
+                {!perso.fiche?.histoire && <p style={{ color: '#4a4a6a', fontSize: 13, fontStyle: 'italic' }}>Aucune histoire renseignée.</p>}
+              </div>
+            )}
+
+            {/* CLASSE */}
+            {ficheTab === 'classe' && (
+              <div style={S.ficheCol}>
+                <div style={S.ficheSection}>
+                  <div style={S.ficheSectionTitle}>{perso.classe ?? '—'}</div>
+                  {(() => {
+                    const INFO = {
+                      guerrier: { de: 'd10', prim: 'FOR / DEX', desc: 'Maître des armes et des armures. Combat polyvalent, résistance hors pair.', capacites: ['Second souffle (1/repos court)', 'Style de combat', 'Fougue (niv. 2)'] },
+                      mage: { de: 'd6', prim: 'INT', desc: 'Érudit des arcanes. Façonne la réalité par la puissance de l\'esprit.', capacites: ['Récupération arcanique (niv. 1)', 'Tradition arcanique (niv. 2)', 'Sorts préparés = INT + niveau'] },
+                      voleur: { de: 'd8', prim: 'DEX', desc: 'Expert de la discrétion et de la précision. Frappe vite, disparaît vite.', capacites: ['Expertise (×2 maîtrise sur 2 compétences)', 'Attaque sournoise', 'Argot des voleurs'] },
+                      clerc: { de: 'd8', prim: 'SAG', desc: 'Canal de la volonté divine. Soutien, soin, et foudre sacrée.', capacites: ['Sorts divins (SAG)', 'Domaine divin (niv. 1)', 'Renvoi des morts-vivants'] },
+                    }
+                    const info = INFO[(perso.classe || '').toLowerCase()]
+                    if (!info) return <p style={S.fichePara}>Informations non disponibles.</p>
+                    return <>
+                      <Row label="Dé de vie" val={info.de} />
+                      <Row label="Caractéristique primaire" val={info.prim} />
+                      <p style={{ ...S.fichePara, marginTop: 10 }}>{info.desc}</p>
+                      <div style={{ ...S.ficheSectionTitle, marginTop: 14 }}>Capacités de classe</div>
+                      {info.capacites.map((cap) => (
+                        <div key={cap} style={S.ficheCapacite}>
+                          <span style={{ color: '#c9a84c', marginRight: 8 }}>✦</span>{cap}
+                        </div>
+                      ))}
+                    </>
+                  })()}
+                </div>
+                {perso.fiche?.apparence?.desc && (
+                  <div style={S.ficheSection}>
+                    <div style={S.ficheSectionTitle}>Apparence</div>
+                    <p style={S.fichePara}>{perso.fiche.apparence.desc}</p>
+                  </div>
+                )}
+              </div>
+            )}
+
+          </div>
+        </div>
+      )}
 
       {/* ── MODALE DÉS ── */}
       {modal && (
@@ -256,6 +515,17 @@ function Derivee({ icon, label, val }) {
       {icon}
       <span style={S.deriveeVal}>{val}</span>
       <span style={S.deriveeLbl}>{label}</span>
+    </div>
+  )
+}
+
+function Row({ label, val, multiline }) {
+  return (
+    <div style={S.ficheRow}>
+      <span style={S.ficheRowLabel}>{label}</span>
+      {multiline
+        ? <span style={{ ...S.ficheRowVal, textAlign: 'left', maxWidth: '65%', color: '#c8c0d8', fontStyle: 'italic' }}>{val}</span>
+        : <span style={S.ficheRowVal}>{val}</span>}
     </div>
   )
 }
@@ -310,6 +580,40 @@ const S = {
   rightSection: { padding: '16px 14px', borderBottom: '1px solid #252a3a' },
   rightTitle: { display: 'flex', alignItems: 'center', gap: 7, fontSize: 11.5, color: '#c9a84c', letterSpacing: 1.5, textTransform: 'uppercase', fontFamily: "'Cinzel', serif", marginBottom: 10 },
   rightEmpty: { margin: 0, fontSize: 12.5, color: '#4a4a6a', fontStyle: 'italic' },
+  noteBtn: { display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '9px 12px', background: '#1a1e2b', border: '1px solid #252a3a', borderRadius: 8, color: '#8a8aaa', fontSize: 13, cursor: 'pointer' },
+  ficheBtn: { display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '9px 12px', background: '#1a1e2b', border: '1px solid #4a3a6e', borderRadius: 8, color: '#c9a84c', fontSize: 13, cursor: 'pointer', marginTop: 4 },
+  // Fiche flottante
+  ficheWindow: { position: 'fixed', zIndex: 190, width: 400, maxHeight: '80vh', display: 'flex', flexDirection: 'column', background: 'linear-gradient(180deg, #16111f 0%, #0f1118 100%)', border: '1px solid #4a3a6e', borderRadius: 14, boxShadow: '0 20px 60px rgba(0,0,0,.8)', overflow: 'hidden' },
+  ficheTitleBar: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '11px 16px', background: '#1a1228', borderBottom: '1px solid #252a3a', cursor: 'grab', userSelect: 'none', flexShrink: 0 },
+  ficheTitleTxt: { display: 'flex', alignItems: 'center', fontSize: 13, color: '#c9a84c', fontFamily: "'Cinzel', serif", letterSpacing: 1, fontWeight: 600 },
+  ficheTabs: { display: 'flex', borderBottom: '1px solid #252a3a', background: '#13161f', flexShrink: 0 },
+  ficheTab: { flex: 1, padding: '9px 4px', border: 'none', borderBottom: '2px solid transparent', background: 'transparent', color: '#8a8aaa', fontSize: 12, cursor: 'pointer', fontFamily: "'Inter', sans-serif" },
+  ficheTabActive: { color: '#c9a84c', borderBottom: '2px solid #c9a84c', background: '#0f1118' },
+  ficheBody: { overflowY: 'auto', flex: 1, padding: '16px' },
+  ficheCol: { display: 'flex', flexDirection: 'column', gap: 0 },
+  ficheSection: { marginBottom: 18 },
+  ficheSectionTitle: { fontSize: 10.5, letterSpacing: 2, textTransform: 'uppercase', color: '#7b5ea7', fontFamily: "'Cinzel', serif", marginBottom: 10, paddingBottom: 6, borderBottom: '1px solid #252a3a' },
+  ficheRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', padding: '5px 0', borderBottom: '1px solid #1a1e2b' },
+  ficheRowLabel: { fontSize: 12, color: '#8a8aaa', flexShrink: 0 },
+  ficheRowVal: { fontSize: 13, color: '#e8e0f0', textAlign: 'right', maxWidth: '60%' },
+  ficheRowValMulti: { fontSize: 13, color: '#e8e0f0', marginTop: 4, lineHeight: 1.55 },
+  ficheStatsGrid: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 7, marginTop: 6 },
+  ficheStatCell: { display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '10px 4px', background: '#13161f', border: '1px solid #252a3a', borderRadius: 8 },
+  ficheStatVal: { fontSize: 19, fontWeight: 700, fontFamily: "'Cinzel', serif" },
+  ficheStatMod: { fontSize: 11, color: '#c9a84c', fontFamily: 'monospace' },
+  ficheStatLbl: { fontSize: 9, color: '#4a4a6a', letterSpacing: 1 },
+  ficheChips: { display: 'flex', flexWrap: 'wrap', gap: 7, marginTop: 4 },
+  ficheChip: { padding: '4px 10px', borderRadius: 14, background: '#1a1e2b', border: '1px solid #252a3a', color: '#8a8aaa', fontSize: 12 },
+  ficheChipGold: { padding: '4px 10px', borderRadius: 14, background: '#1a160f', border: '1px solid #6b5520', color: '#c9a84c', fontSize: 12 },
+  fichePara: { margin: '4px 0 0', fontSize: 13, color: '#8a8aaa', lineHeight: 1.6 },
+  ficheCapacite: { display: 'flex', alignItems: 'flex-start', fontSize: 13, color: '#e8e0f0', padding: '6px 0', borderBottom: '1px solid #1a1e2b' },
+  // Bloc-notes flottant
+  noteWindow: { position: 'fixed', zIndex: 200, width: 340, minHeight: 260, display: 'flex', flexDirection: 'column', background: 'linear-gradient(180deg, #16111f 0%, #0f1118 100%)', border: '1px solid #4a3a6e', borderRadius: 12, boxShadow: '0 16px 48px rgba(0,0,0,.7)', overflow: 'hidden' },
+  noteTitleBar: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', background: '#1a1228', borderBottom: '1px solid #252a3a', cursor: 'grab', userSelect: 'none' },
+  noteTitleTxt: { display: 'flex', alignItems: 'center', fontSize: 12, color: '#c9a84c', fontFamily: "'Cinzel', serif", letterSpacing: 1 },
+  noteSaving: { fontSize: 11, color: '#4a4a6a', fontStyle: 'italic' },
+  noteClose: { background: 'none', border: 'none', color: '#8a8aaa', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: 2 },
+  noteArea: { flex: 1, padding: '14px 16px', background: 'transparent', border: 'none', color: '#e8e0f0', fontSize: 13.5, fontFamily: "'Inter', sans-serif", lineHeight: 1.65, resize: 'none', minHeight: 220, outline: 'none' },
   modalOverlay: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 },
   modalBox: { background: 'linear-gradient(180deg, #16111f 0%, #0f1118 100%)', border: '1px solid #4a3a6e', borderRadius: 18, padding: '36px 40px', textAlign: 'center', maxWidth: 360, width: '90%', boxShadow: '0 24px 80px rgba(0,0,0,.7)' },
   modalEyebrow: { fontSize: 11, letterSpacing: 4, color: '#c9a84c', marginBottom: 14, fontFamily: "'Cinzel', serif" },
