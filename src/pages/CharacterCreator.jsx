@@ -1,9 +1,11 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   User, Sparkles, Swords, ScrollText, BookOpen, ShieldCheck,
   Plus, Minus, Wand2, Tag, Heart, Shield, Footprints, Eye, Zap, Star,
 } from "lucide-react";
 import { genererHistoire as genererHistoireIA } from "../services/histoireService";
+import { createCharacter } from "../services/characterService";
 
 /* ──────────────────────────────────────────────────────────
    CHARTE GRAPHIQUE — alignée sur l'écran de jeu principal
@@ -123,7 +125,8 @@ const TABS = [
   { id: "recap", nom: "Récapitulatif", icon: ScrollText },
 ];
 
-export default function CreateCharacter() {
+export default function CharacterCreator() {
+  const navigate = useNavigate();
   const [tab, setTab] = useState("identite");
 
   const [id, setId] = useState({ nom: "", espece: null, classe: null, sousClasse: "", historique: "", alignement: "" });
@@ -137,6 +140,8 @@ export default function CreateCharacter() {
   const [tags, setTags] = useState([]);
   const [genLoading, setGenLoading] = useState(false);
   const [genErreur, setGenErreur] = useState("");
+  const [forgeLoading, setForgeLoading] = useState(false);
+  const [forgeErreur, setForgeErreur] = useState("");
 
   const classe = CLASSES.find((c) => c.id === id.classe);
   const espece = ESPECES.find((e) => e.id === id.espece);
@@ -201,12 +206,60 @@ export default function CreateCharacter() {
     }
   };
 
+  /* Sauvegarde en base et redirige */
+  const forgerPersonnage = async () => {
+    if (!id.nom || !id.espece || !id.classe) {
+      setForgeErreur("Remplis au moins le nom, l'espèce et la classe.");
+      setTab("identite");
+      return;
+    }
+    setForgeErreur("");
+    setForgeLoading(true);
+    try {
+      await createCharacter({
+        nom: id.nom,
+        espece: espece?.nom,
+        classe: classe?.nom,
+        sous_classe: id.sousClasse,
+        historique: id.historique,
+        niveau: 1,
+        force:        valeurFinale("FOR"),
+        dexterite:    valeurFinale("DEX"),
+        constitution: valeurFinale("CON"),
+        intelligence: valeurFinale("INT"),
+        sagesse:      valeurFinale("SAG"),
+        charisme:     valeurFinale("CHA"),
+        pv_max:     pdv !== "—" ? pdv : null,
+        pv_actuels: pdv !== "—" ? pdv : null,
+        fiche: {
+          alignement: id.alignement,
+          apparence: app,
+          competences: skills,
+          langues,
+          histoire,
+          personnalite: perso,
+          themes: tags,
+          bonusChoisis,
+        },
+      });
+      navigate("/personnages");
+    } catch (e) {
+      setForgeErreur(e.message);
+    } finally {
+      setForgeLoading(false);
+    }
+  };
+
   return (
     <div style={S.page}>
       <style>{CSS}</style>
 
       <div style={S.frame}>
         <header style={S.header}>
+          <div style={{ position: "absolute", left: 20, top: 20 }}>
+            <button style={{ background: "none", border: `1px solid ${C.border}`, borderRadius: 8, color: C.textSub, padding: "6px 12px", fontSize: 13 }}
+              onClick={() => navigate("/personnages")}>← Retour</button>
+          </div>
           <div style={S.eyebrow}>✦ Forge des âmes ✦</div>
           <h1 style={S.title}>Création de personnage</h1>
           <p style={S.subtitle}>Donnez vie à celui ou celle dont vous écrirez la légende.</p>
@@ -484,7 +537,11 @@ export default function CreateCharacter() {
                 )}
               </div>
 
-              <button style={S.cta}>Forger le personnage</button>
+              {forgeErreur && <p style={{ color: C.red, fontSize: 13, textAlign: "center" }}>{forgeErreur}</p>}
+              <button style={{ ...S.cta, opacity: forgeLoading ? 0.7 : 1 }}
+                onClick={forgerPersonnage} disabled={forgeLoading}>
+                {forgeLoading ? "Forge en cours…" : "Forger le personnage"}
+              </button>
             </div>
           )}
         </main>
@@ -572,7 +629,7 @@ const S = {
   page: { minHeight: "100vh", background: C.gradPage, padding: "32px 16px", fontFamily: "'Inter', sans-serif", color: C.textPrime },
   frame: { maxWidth: 760, margin: "0 auto", background: C.bgPanel, border: `1px solid ${C.border}`, borderRadius: 16, overflow: "hidden", boxShadow: "0 24px 80px rgba(0,0,0,.6)" },
 
-  header: { padding: "34px 32px 26px", textAlign: "center", borderBottom: `1px solid ${C.border}`, background: "linear-gradient(180deg, #140e22 0%, #0f1118 100%)" },
+  header: { position: "relative", padding: "34px 32px 26px", textAlign: "center", borderBottom: `1px solid ${C.border}`, background: "linear-gradient(180deg, #140e22 0%, #0f1118 100%)" },
   eyebrow: { fontSize: 12, letterSpacing: 4, color: C.gold, marginBottom: 10, fontFamily: "'Cinzel', serif" },
   title: { margin: 0, fontSize: 34, fontWeight: 600, fontFamily: "'Cinzel', serif", letterSpacing: 1, color: C.textPrime },
   subtitle: { margin: "10px 0 0", fontSize: 14, color: C.textSub },

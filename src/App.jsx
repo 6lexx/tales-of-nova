@@ -4,7 +4,7 @@ import ProtectedRoute from './components/ProtectedRoute'
 import Login from './pages/Login'
 import Accueil from './pages/Accueil'
 import Characters from './pages/Characters'
-import CreateCharacter from './pages/CreateCharacter'
+import CharacterCreator from './pages/CharacterCreator'
 import Campagnes from './pages/Campagnes'
 import Profil from './pages/Profil'
 import Parametres from './pages/Parametres'
@@ -19,14 +19,14 @@ export default function App() {
     <AuthProvider>
       <BrowserRouter>
         <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route path="/" element={protege(<Accueil />)} />
-          <Route path="/personnages" element={protege(<Characters />)} />
-          <Route path="/personnage/nouveau" element={protege(<CreateCharacter />)} />
-          <Route path="/campagnes" element={protege(<Campagnes />)} />
-          <Route path="/profil" element={protege(<Profil />)} />
-          <Route path="/parametres" element={protege(<Parametres />)} />
-          <Route path="/jeu/:id" element={protege(<Game />)} />
+          <Route path="/login"              element={<Login />} />
+          <Route path="/"                   element={protege(<Accueil />)} />
+          <Route path="/personnages"        element={protege(<Characters />)} />
+          <Route path="/personnage/nouveau" element={protege(<CharacterCreator />)} />
+          <Route path="/campagnes"          element={protege(<Campagnes />)} />
+          <Route path="/profil"             element={protege(<Profil />)} />
+          <Route path="/parametres"         element={protege(<Parametres />)} />
+          <Route path="/jeu/:id"            element={protege(<Game />)} />
         </Routes>
       </BrowserRouter>
     </AuthProvider>
