@@ -53,6 +53,7 @@ export default function Game() {
   const [noteOpen, setNoteOpen] = useState(false)
   const [noteTexte, setNoteTexte] = useState('')
   const [notePos, setNotePos] = useState({ x: 80, y: 80 })
+  const [noteSize, setNoteSize] = useState({ w: 340, h: 320 })
   const [noteSaving, setNoteSaving] = useState(false)
   const dragRef = useRef(null)
   const saveTimerRef = useRef(null)
@@ -116,6 +117,21 @@ export default function Game() {
     const startX = e.clientX - notePos.x
     const startY = e.clientY - notePos.y
     const onMove = (ev) => setNotePos({ x: ev.clientX - startX, y: ev.clientY - startY })
+    const onUp = () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp) }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
+
+  // Redimensionnement du bloc-notes (poignée coin bas-droit)
+  const startResize = (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const startX = e.clientX, startY = e.clientY
+    const { w: startW, h: startH } = noteSize
+    const onMove = (ev) => setNoteSize({
+      w: Math.max(240, startW + (ev.clientX - startX)),
+      h: Math.max(200, startH + (ev.clientY - startY)),
+    })
     const onUp = () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp) }
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup', onUp)
@@ -453,7 +469,7 @@ export default function Game() {
 
       {/* ── BLOC-NOTES FLOTTANT ── */}
       {noteOpen && (
-        <div style={{ ...S.noteWindow, left: notePos.x, top: notePos.y }} ref={dragRef}>
+        <div style={{ ...S.noteWindow, left: notePos.x, top: notePos.y, width: noteSize.w, height: noteSize.h }} ref={dragRef}>
           <div style={S.noteTitleBar} onMouseDown={startDrag}>
             <span style={S.noteTitleTxt}><GripHorizontal size={13} style={{ marginRight: 6, opacity: 0.5 }} />Bloc-notes</span>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -468,6 +484,11 @@ export default function Game() {
             placeholder="Tes notes de campagne, PNJ rencontrés, indices…"
             spellCheck={false}
           />
+          <div style={S.noteResizeGrip} onMouseDown={startResize} title="Redimensionner">
+            <svg width="12" height="12" viewBox="0 0 12 12" style={{ display: 'block' }}>
+              <path d="M11 5 L5 11 M11 8.5 L8.5 11" stroke="#6a6a8a" strokeWidth="1.2" strokeLinecap="round" />
+            </svg>
+          </div>
         </div>
       )}
 
@@ -760,12 +781,13 @@ const S = {
   fichePara: { margin: '4px 0 0', fontSize: 13, color: '#8a8aaa', lineHeight: 1.6 },
   ficheCapacite: { display: 'flex', alignItems: 'flex-start', fontSize: 13, color: '#e8e0f0', padding: '6px 0', borderBottom: '1px solid #1a1e2b' },
   // Bloc-notes flottant
-  noteWindow: { position: 'fixed', zIndex: 200, width: 340, minHeight: 260, display: 'flex', flexDirection: 'column', background: 'linear-gradient(180deg, #16111f 0%, #0f1118 100%)', border: '1px solid #4a3a6e', borderRadius: 12, boxShadow: '0 16px 48px rgba(0,0,0,.7)', overflow: 'hidden' },
-  noteTitleBar: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', background: '#1a1228', borderBottom: '1px solid #252a3a', cursor: 'grab', userSelect: 'none' },
+  noteWindow: { position: 'fixed', zIndex: 200, display: 'flex', flexDirection: 'column', background: 'linear-gradient(180deg, #16111f 0%, #0f1118 100%)', border: '1px solid #4a3a6e', borderRadius: 12, boxShadow: '0 16px 48px rgba(0,0,0,.7)', overflow: 'hidden' },
+  noteTitleBar: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', background: '#1a1228', borderBottom: '1px solid #252a3a', cursor: 'grab', userSelect: 'none', flexShrink: 0 },
   noteTitleTxt: { display: 'flex', alignItems: 'center', fontSize: 12, color: '#c9a84c', fontFamily: "'Cinzel', serif", letterSpacing: 1 },
   noteSaving: { fontSize: 11, color: '#4a4a6a', fontStyle: 'italic' },
   noteClose: { background: 'none', border: 'none', color: '#8a8aaa', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: 2 },
-  noteArea: { flex: 1, padding: '14px 16px', background: 'transparent', border: 'none', color: '#e8e0f0', fontSize: 13.5, fontFamily: "'Inter', sans-serif", lineHeight: 1.65, resize: 'none', minHeight: 220, outline: 'none' },
+  noteArea: { flex: 1, minHeight: 0, padding: '14px 16px', background: 'transparent', border: 'none', color: '#e8e0f0', fontSize: 13.5, fontFamily: "'Inter', sans-serif", lineHeight: 1.65, resize: 'none', outline: 'none', overflowY: 'auto', overflowX: 'hidden', whiteSpace: 'pre-wrap', wordBreak: 'break-word' },
+  noteResizeGrip: { position: 'absolute', right: 3, bottom: 3, width: 16, height: 16, display: 'flex', alignItems: 'flex-end', justifyContent: 'flex-end', cursor: 'nwse-resize', padding: 2, opacity: 0.7 },
   modalOverlay: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 },
   modalBox: { background: 'linear-gradient(180deg, #16111f 0%, #0f1118 100%)', border: '1px solid #4a3a6e', borderRadius: 18, padding: '36px 40px', textAlign: 'center', maxWidth: 360, width: '90%', boxShadow: '0 24px 80px rgba(0,0,0,.7)' },
   modalEyebrow: { fontSize: 11, letterSpacing: 4, color: '#c9a84c', marginBottom: 14, fontFamily: "'Cinzel', serif" },
