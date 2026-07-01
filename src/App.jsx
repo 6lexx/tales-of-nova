@@ -13,6 +13,7 @@ import './styles/app.css'
 
 const Game = lazy(() => import('./pages/Game'))
 const CharacterCreator = lazy(() => import('./pages/CharacterCreator'))
+const NouvelleCampagne = lazy(() => import('./pages/NouvelleCampagne'))
 
 const protege = (el) => <ProtectedRoute>{el}</ProtectedRoute>
 
@@ -27,6 +28,7 @@ export default function App() {
             <Route path="/personnages"        element={protege(<Characters />)} />
             <Route path="/personnage/nouveau" element={protege(<CharacterCreator />)} />
             <Route path="/campagnes"          element={protege(<Campagnes />)} />
+            <Route path="/campagne/nouvelle/:id" element={protege(<NouvelleCampagne />)} />
             <Route path="/profil"             element={protege(<Profil />)} />
             <Route path="/parametres"         element={protege(<Parametres />)} />
             <Route path="/jeu/:id"            element={protege(<Game />)} />

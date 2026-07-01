@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { listCharacters } from '../services/characterService'
+import { campagneExistePour } from '../services/sessionService'
 
 export default function Characters() {
   const navigate = useNavigate()
@@ -14,6 +15,16 @@ export default function Characters() {
       .catch((e) => setErreur(e.message))
       .finally(() => setLoading(false))
   }, [])
+
+  // Perso avec campagne → reprise ; sans campagne → page de paramétrage.
+  async function ouvrir(characterId) {
+    try {
+      const existe = await campagneExistePour(characterId)
+      navigate(existe ? `/jeu/${characterId}` : `/campagne/nouvelle/${characterId}`)
+    } catch (e) {
+      setErreur(e.message)
+    }
+  }
 
   return (
     <div className="page">
@@ -41,7 +52,7 @@ export default function Characters() {
 
       <div className="char-grid">
         {persos.map((p) => (
-          <button key={p.id} className="char-card" onClick={() => navigate(`/jeu/${p.id}`)}>
+          <button key={p.id} className="char-card" onClick={() => ouvrir(p.id)}>
             <span className="char-name">{p.nom}</span>
             <span className="char-meta">{p.espece} · {p.classe} niv.{p.niveau}</span>
             <span className="char-pv">PV {p.pv_actuels ?? '?'}/{p.pv_max ?? '?'}</span>
