@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Heart, Shield, Zap, Star, Swords, ScrollText, Dice6, Send, ChevronLeft, BookOpen, X, GripHorizontal, User } from 'lucide-react'
+import { Heart, Shield, Zap, Star, Swords, ScrollText, Dice6, Send, ChevronLeft, BookOpen, X, GripHorizontal, User, Eye } from 'lucide-react'
 import { getCharacter } from '../services/characterService'
 import { getOrCreateSession, loadMessages, saveMessage, updateSession } from '../services/sessionService'
-import { buildSystemPrompt, sendMessage, parseResponse } from '../services/claudeService'
+import { buildSystemPrompt, sendMessage, parseResponse, buildAdminPrompt, sendAdminMessage } from '../services/claudeService'
 import { lancerD20, formatPourIA } from '../services/diceService'
 import Narration from '../components/Narration'
+import { useAuth } from '../context/AuthContext'
 
 const C = {
   bg: '#0a0b0f', bgPanel: '#0f1118', bgCard: '#13161f', bgInput: '#1a1e2b',
@@ -27,6 +28,7 @@ const bonusMaitrise = (niv) => MAITRISE_NIVEAU[Math.min(20, Math.max(1, niv || 1
 export default function Game() {
   const { id: characterId } = useParams()
   const navigate = useNavigate()
+  const { isAdmin } = useAuth()
 
   const [perso, setPerso] = useState(null)
   const [session, setSession] = useState(null)
@@ -42,6 +44,10 @@ export default function Game() {
   const jetRef = useRef(null)
   const animRef = useRef(null)
   const filRef = useRef(null)
+
+  // Mode admin (inspection) — historique éphémère, jamais persisté
+  const [mode, setMode] = useState('mj')          // 'mj' | 'admin'
+  const [adminMessages, setAdminMessages] = useState([])
 
   // Bloc-notes
   const [noteOpen, setNoteOpen] = useState(false)
@@ -83,7 +89,7 @@ export default function Game() {
       filRef.current?.scrollTo({ top: filRef.current.scrollHeight, behavior: 'smooth' })
     }, 50)
     return () => clearTimeout(t)
-  }, [messages, loading])
+  }, [messages, adminMessages, mode, loading])
 
   useEffect(() => () => clearInterval(animRef.current), [])
 
@@ -163,6 +169,31 @@ export default function Game() {
     }
   }
 
+  // Envoi en mode inspection — bypass total : pas de persistance, pas de parseResponse,
+  // pas de jet. Le contexte de narration sert de lecture ; le fil admin reste éphémère.
+  async function envoyerAdmin() {
+    if (!saisie.trim() || loading) return
+    const contenu = saisie.trim()
+    setSaisie('')
+    setErreur('')
+    const nouveaux = [...adminMessages, { role: 'user', content: contenu }]
+    setAdminMessages(nouveaux)
+    setLoading(true)
+    try {
+      const system = buildAdminPrompt(perso, session)
+      const historique = [
+        ...messages.map((m) => ({ role: m.role, content: m.content })),
+        ...nouveaux.map((m) => ({ role: m.role, content: m.content })),
+      ]
+      const texte = await sendAdminMessage(historique, system)
+      setAdminMessages((prev) => [...prev, { role: 'assistant', content: texte }])
+    } catch (e) {
+      setErreur(e.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
   // Ouvre un jet (réinitialise l'état d'animation)
   function ouvrirJet(jet) {
     setModal(jet)
@@ -233,8 +264,10 @@ export default function Game() {
     }
   }
 
+  const onSend = () => (mode === 'admin' ? envoyerAdmin() : envoyer())
+
   const handleKey = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); envoyer() }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSend() }
   }
 
   if (initLoading) return <div style={S.centrer}>Chargement de l'aventure…</div>
@@ -290,6 +323,15 @@ export default function Game() {
               {dernierJet.critEchec && <div style={{ color: C.red, textAlign: 'center', fontSize: 12, marginTop: 6 }}>✦ Échec critique !</div>}
             </div>
           )}
+          {isAdmin && (
+            <button
+              style={{ ...S.modeBtn, ...(mode === 'admin' ? S.modeBtnActive : {}) }}
+              onClick={() => setMode((m) => (m === 'admin' ? 'mj' : 'admin'))}
+            >
+              <Eye size={13} />
+              {mode === 'admin' ? "Quitter l'inspection" : 'Mode inspection'}
+            </button>
+          )}
           <button style={S.ficheBtn} onClick={() => setFicheOpen((v) => !v)}>
             <User size={13} />
             {ficheOpen ? 'Fermer la fiche' : 'Consulter la fiche'}
@@ -300,25 +342,53 @@ export default function Game() {
       {/* ── CENTRE ── */}
       <main style={S.centre}>
         <div style={S.fil} ref={filRef}>
-          {messages.map((m, i) => (
-            <div key={i} style={{ ...S.bulle, ...(m.role === 'user' ? S.bulleJoueur : S.bulleMJ) }}>
-              {m.role === 'assistant' && <div style={S.mjLabel}>✦ Maître du Jeu</div>}
-              {m.role === 'assistant'
-                ? <div style={S.bulleTexte}><Narration text={m.content} /></div>
-                : <p style={S.bulleTexte}>{m.content}</p>}
-            </div>
-          ))}
-          {loading && (
-            <div style={{ ...S.bulle, ...S.bulleMJ }}>
-              <div style={S.mjLabel}>✦ Maître du Jeu</div>
-              <p style={{ ...S.bulleTexte, color: C.textMuted }}>Le MJ réfléchit…</p>
-            </div>
+          {mode === 'admin' ? (
+            <>
+              <div style={S.adminBanner}>
+                <Eye size={13} style={{ marginRight: 6, flexShrink: 0 }} />
+                Inspection — hors-jeu, lecture seule. Fil éphémère (non sauvegardé), n'altère jamais la partie.
+              </div>
+              {adminMessages.length === 0 && !loading && (
+                <p style={{ ...S.bulleTexte, color: C.textMuted, fontStyle: 'italic' }}>
+                  Interroge le MJ sur la scène courante : intentions des PNJ, DD envisagés, embranchements prévus…
+                </p>
+              )}
+              {adminMessages.map((m, i) => (
+                <div key={i} style={{ ...S.bulle, ...(m.role === 'user' ? S.bulleJoueur : S.bulleAdmin) }}>
+                  {m.role === 'assistant' && <div style={S.adminLabel}>✦ Inspection MJ</div>}
+                  <p style={S.bulleTexte}>{m.content}</p>
+                </div>
+              ))}
+              {loading && (
+                <div style={{ ...S.bulle, ...S.bulleAdmin }}>
+                  <div style={S.adminLabel}>✦ Inspection MJ</div>
+                  <p style={{ ...S.bulleTexte, color: C.textMuted }}>Analyse…</p>
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              {messages.map((m, i) => (
+                <div key={i} style={{ ...S.bulle, ...(m.role === 'user' ? S.bulleJoueur : S.bulleMJ) }}>
+                  {m.role === 'assistant' && <div style={S.mjLabel}>✦ Maître du Jeu</div>}
+                  {m.role === 'assistant'
+                    ? <div style={S.bulleTexte}><Narration text={m.content} /></div>
+                    : <p style={S.bulleTexte}>{m.content}</p>}
+                </div>
+              ))}
+              {loading && (
+                <div style={{ ...S.bulle, ...S.bulleMJ }}>
+                  <div style={S.mjLabel}>✦ Maître du Jeu</div>
+                  <p style={{ ...S.bulleTexte, color: C.textMuted }}>Le MJ réfléchit…</p>
+                </div>
+              )}
+            </>
           )}
         </div>
         {erreur && <div style={S.erreur}>{erreur}</div>}
 
         {/* ── PANNEAU DE DÉS (ancré, non bloquant) ── */}
-        {modal && (
+        {mode === 'mj' && modal && (
           <div style={S.diceDock}>
             <div style={S.diceInfo}>
               <span style={S.diceTitre}>Jet de {modal.label}</span>
@@ -353,10 +423,11 @@ export default function Game() {
 
         <div style={S.saisieZone}>
           <textarea style={S.saisie} value={saisie} onChange={(e) => setSaisie(e.target.value)}
-            onKeyDown={handleKey} placeholder="Décrivez votre action… (Entrée pour envoyer)"
-            disabled={loading || !!modal} rows={3} />
-          <button style={{ ...S.sendBtn, opacity: loading || !saisie.trim() ? 0.5 : 1 }}
-            onClick={envoyer} disabled={loading || !saisie.trim() || !!modal}>
+            onKeyDown={handleKey}
+            placeholder={mode === 'admin' ? 'Interroge le MJ hors-jeu… (Entrée pour envoyer)' : 'Décrivez votre action… (Entrée pour envoyer)'}
+            disabled={loading || (mode === 'mj' && !!modal)} rows={3} />
+          <button style={{ ...S.sendBtn, ...(mode === 'admin' ? S.sendBtnAdmin : {}), opacity: loading || !saisie.trim() ? 0.5 : 1 }}
+            onClick={onSend} disabled={loading || !saisie.trim() || (mode === 'mj' && !!modal)}>
             <Send size={18} />
           </button>
         </div>
@@ -657,6 +728,12 @@ const S = {
   rightEmpty: { margin: 0, fontSize: 12.5, color: '#4a4a6a', fontStyle: 'italic' },
   noteBtn: { display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '9px 12px', background: '#1a1e2b', border: '1px solid #252a3a', borderRadius: 8, color: '#8a8aaa', fontSize: 13, cursor: 'pointer' },
   ficheBtn: { display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '9px 12px', background: '#1a1e2b', border: '1px solid #4a3a6e', borderRadius: 8, color: '#c9a84c', fontSize: 13, cursor: 'pointer', marginTop: 4 },
+  modeBtn: { display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '9px 12px', background: '#1a1e2b', border: '1px solid #6b5520', borderRadius: 8, color: '#c9a84c', fontSize: 13, cursor: 'pointer', marginTop: 4 },
+  modeBtnActive: { background: 'linear-gradient(135deg, #2a1e0a 0%, #1a1206 100%)', border: '1px solid #c9a84c', color: '#e8c96a' },
+  adminBanner: { display: 'flex', alignItems: 'center', padding: '9px 14px', background: '#1a160f', border: '1px solid #6b5520', borderRadius: 8, color: '#c9a84c', fontSize: 12, letterSpacing: 0.3, lineHeight: 1.4 },
+  bulleAdmin: { background: '#141018', border: '1px dashed #6b5520', alignSelf: 'flex-start' },
+  adminLabel: { fontSize: 10.5, color: '#c9a84c', letterSpacing: 1.5, marginBottom: 8, fontFamily: "'Cinzel', serif" },
+  sendBtnAdmin: { background: 'linear-gradient(135deg, #c9a84c 0%, #8a6020 100%)' },
   // Fiche flottante
   ficheWindow: { position: 'fixed', zIndex: 190, width: 400, maxHeight: '80vh', display: 'flex', flexDirection: 'column', background: 'linear-gradient(180deg, #16111f 0%, #0f1118 100%)', border: '1px solid #4a3a6e', borderRadius: 14, boxShadow: '0 20px 60px rgba(0,0,0,.8)', overflow: 'hidden' },
   ficheTitleBar: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '11px 16px', background: '#1a1228', borderBottom: '1px solid #252a3a', cursor: 'grab', userSelect: 'none', flexShrink: 0 },

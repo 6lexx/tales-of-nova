@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext'
 export default function Accueil() {
   const navigate = useNavigate()
   const { signOut } = useAuth()
+  const { isAdmin } = useAuth()
 
   return (
     <div className="menu-screen">
@@ -25,6 +26,8 @@ export default function Accueil() {
           <button className="btn-ghost btn-block" onClick={() => navigate('/profil')}>Profil</button>
           <button className="btn-ghost btn-block" onClick={() => navigate('/parametres')}>Paramètres</button>
         </div>
+
+        {isAdmin && <p style={{color:'#c9a84c'}}>Mode admin disponible</p>}
 
         <button className="menu-logout" onClick={signOut}>Se déconnecter</button>
       </div>
