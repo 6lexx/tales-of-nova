@@ -31,38 +31,41 @@ export async function genererArcCampagne(character = {}, options = {}) {
   const system = `Tu es le concepteur-narrateur d'une partie de D&D 5e solo en français (dark-fantasy, Royaumes Oubliés par défaut).
 On te demande de bâtir la BIBLE D'ARC d'une nouvelle campagne, taillée sur mesure pour CE personnage.
 
-Tu réponds UNIQUEMENT par un objet JSON valide, sans aucun texte autour, sans balise Markdown, sans commentaire.
+Tu réponds UNIQUEMENT par un objet JSON valide, sans aucun texte autour, sans balise Markdown, et SANS commentaire (jamais de // ni de /* */ dans le JSON).
 
-Schéma EXACT à respecter (toutes les clés présentes) :
+Structure attendue (renvoie EXACTEMENT ces clés et ces types) :
 {
-  "objectif_long_terme": "",         // menace ou mystère structurant, formulé OUVERT (pas une quête fermée à cocher)
-  "enjeu_personnel": "",             // pourquoi CE perso, pourquoi MAINTENANT, ce qu'il risque de perdre ou gagner
-  "information_privilegiee": "",     // ce que le perso sait et que les autres ignorent — valorise sa classe / son historique
-  "antagoniste": {
-    "nom": "", "motivation": "", "secret": "",
-    "tension_locale": ""             // pression concrète et palpable DÈS la première scène, même si le grand objectif reste lointain
-  },
-  "accroche_ouverture": "",          // le crochet de départ, dérivé de tout ce qui précède, qui met le perso EN MOUVEMENT
+  "objectif_long_terme": "",
+  "enjeu_personnel": "",
+  "information_privilegiee": "",
+  "antagoniste": { "nom": "", "motivation": "", "secret": "", "tension_locale": "" },
+  "accroche_ouverture": "",
   "lieux_cles": [ { "nom": "", "description": "", "role": "" } ],
-  "pnj_cles":   [ { "nom": "", "role": "", "motivation": "", "secret": "" } ],
-  "factions":   [ { "nom": "", "agenda": "" } ],
-  "jalons":     [ { "titre": "", "declencheur": "", "description": "" } ],
-  "graines":    [ "" ],              // foreshadowing / fusils de Tchekhov à ressortir plus tard
+  "pnj_cles": [ { "nom": "", "role": "", "motivation": "", "secret": "" } ],
+  "factions": [ { "nom": "", "agenda": "" } ],
+  "jalons": [ { "titre": "", "declencheur": "", "description": "" } ],
+  "graines": [ "" ],
   "ton": "",
   "themes": [ "" ]
 }
 
-Exigences NON négociables :
-1. enjeu_personnel : clair, immédiat, ANCRÉ dans l'historique du personnage fourni — prolonge-le, ne l'invente pas à côté.
-2. antagoniste : concret, avec une motivation ET un secret, plus une tension_locale qui met la pression dès la scène 1.
-3. information_privilegiee : un savoir que le perso détient seul, qui met en valeur sa classe et/ou son background.
-4. accroche_ouverture : découle des points 1 à 3, oriente vers l'action sans tout dévoiler.
-5. jalons : des paliers de progression NARRATIVE (milestones), jamais des récompenses d'XP. Adapte leur nombre à l'envergure (cible : ${opts.nb_jalons_cible} jalons).
-6. objectif_long_terme : reste en toile de fond ; il ne doit PAS être évident dès l'ouverture.
+Rôle de chaque champ :
+- objectif_long_terme : menace ou mystère structurant, formulé OUVERT (pas une quête fermée). Reste en toile de fond, PAS évident dès l'ouverture.
+- enjeu_personnel : pourquoi CE perso, pourquoi MAINTENANT, ce qu'il risque — ANCRÉ dans son historique fourni (prolonge-le, ne l'invente pas à côté).
+- information_privilegiee : un savoir que le perso détient seul, qui valorise sa classe / son background.
+- antagoniste : concret, motivation + secret, et une tension_locale palpable DÈS la première scène.
+- accroche_ouverture : découle des trois points ci-dessus, met le perso EN MOUVEMENT sans tout dévoiler.
+- jalons : paliers de progression NARRATIVE (milestones), jamais des récompenses d'XP.
+- graines : détails de foreshadowing / fusils de Tchekhov à ressortir plus tard.
+
+Limites de taille (à respecter pour rester concis ET valide) :
+- lieux_cles : 2 à 4  |  pnj_cles : 3 à 5  |  factions : 2 à 3
+- jalons : ${opts.nb_jalons_cible}  |  graines : 3 à 5  |  themes : 3 à 5
+- Chaque valeur texte : 1 à 3 phrases maximum.
 
 Cohérence : respecte espèce, classe, historique, alignement et TOUS les champs d'histoire déjà générés fournis.
 Priorise les options (ton, type d'aventure, envergure, région, centralité de l'historique, létalité).
-Si la région vaut null ou « surprends-moi », choisis toi-même un point de départ crédible des Royaumes Oubliés.
+Si "region" vaut null ou « surprends-moi », choisis toi-même un point de départ crédible des Royaumes Oubliés.
 EXCLUS strictement les thèmes listés dans "lignes_et_voiles".`
 
   const contexte = {
@@ -76,7 +79,7 @@ EXCLUS strictement les thèmes listés dans "lignes_et_voiles".`
   }]
 
   const { data, error } = await supabase.functions.invoke('mj', {
-    body: { messages, system, max_tokens: 3000 },
+    body: { messages, system, max_tokens: 4096 },
   })
 
   if (error) {
@@ -122,13 +125,20 @@ function contexteOptions(options = {}) {
   }
 }
 
-// Extraction JSON robuste : retire les backticks, isole du premier { au dernier }.
+// Extraction JSON robuste : retire les backticks, isole du premier { au dernier },
+// puis en secours retire les virgules traînantes (,] ou ,}) qui font échouer JSON.parse.
 function extraireJSON(texte = '') {
   const nettoye = texte.replace(/```json|```/g, '').trim()
   const debut = nettoye.indexOf('{')
   const fin = nettoye.lastIndexOf('}')
   if (debut === -1 || fin === -1) throw new Error('Réponse de l’IA illisible (JSON de l’arc introuvable).')
-  return JSON.parse(nettoye.slice(debut, fin + 1))
+  const brut = nettoye.slice(debut, fin + 1)
+  try {
+    return JSON.parse(brut)
+  } catch {
+    const repare = brut.replace(/,(\s*[}\]])/g, '$1')
+    return JSON.parse(repare) // laisse remonter l'erreur si le JSON reste cassé (ex. tronqué)
+  }
 }
 
 // Garantit la présence de toutes les clés → aucun crash en aval (buildBlocArc, affichage).

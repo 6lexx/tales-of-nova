@@ -10,8 +10,13 @@
 //   [PALIER: niveau:4 | raison:"Fin de l'acte I"]
 //   [CODEX: cat:pnj | cle:"padhrane" | titre:"Padhrane" | resume:"..." | detail:1]
 //   [RECAP] (signale au front de déclencher generateRecap à la clôture)
+//   [QUETE:creer|type|titre|description]  (type: immediate|principale|secondaire)
+//   [QUETE:indice|titre|texte]
+//   [QUETE:accomplir|titre]
+//   [QUETE:echouer|titre]
+//   (QUETE = grammaire positionnelle, séparateur "|", identification par titre)
 
-const TAG_RE = /\[(CONDITION|REPOS|PALIER|CODEX|RECAP)(?::([^\]]*))?\]/g
+const TAG_RE = /\[(CONDITION|REPOS|PALIER|CODEX|RECAP|QUETE)(?::([^\]]*))?\]/g
 
 // "cle:empoisonne | source:\"piège\" | duree:3 rounds" -> {cle, source, duree}
 function parseFields(raw) {
@@ -65,6 +70,21 @@ export function parseMjTags(text) {
       case 'RECAP':
         actions.push({ kind: 'recap' })
         break
+      case 'QUETE': {
+        // Grammaire positionnelle : verbe|arg1|arg2… (séparateur "|")
+        const seg = (body || '').split('|').map((s) => s.trim().replace(/^"|"$/g, ''))
+        const verbe = (seg[0] || '').toLowerCase()
+        if (verbe === 'creer' && seg[2]) {
+          actions.push({ kind: 'quest', op: 'creer', type: seg[1] || 'secondaire', titre: seg[2], description: seg[3] || '' })
+        } else if (verbe === 'indice' && seg[1] && seg[2]) {
+          actions.push({ kind: 'quest', op: 'indice', titre: seg[1], texte: seg[2] })
+        } else if (verbe === 'accomplir' && seg[1]) {
+          actions.push({ kind: 'quest', op: 'accomplir', titre: seg[1] })
+        } else if (verbe === 'echouer' && seg[1]) {
+          actions.push({ kind: 'quest', op: 'echouer', titre: seg[1] })
+        }
+        break
+      }
     }
     return '' // retire le tag du texte affiché
   })
@@ -76,7 +96,7 @@ export function parseMjTags(text) {
 // après réception de la réponse MJ.
 export async function applyMjActions(actions, ctx, services) {
   const { characterId, campaignId, sessionId, invokeClaude } = ctx
-  const { statusService, progressionService, codexService } = services
+  const { statusService, progressionService, codexService, questService } = services
 
   for (const a of actions) {
     try {
@@ -101,6 +121,17 @@ export async function applyMjActions(actions, ctx, services) {
         })
       } else if (a.kind === 'recap') {
         await progressionService.generateRecap({ campaignId, sessionId, invokeClaude })
+      } else if (a.kind === 'quest') {
+        // Identification par titre, quêtes scopées à la campagne.
+        if (a.op === 'creer') {
+          await questService.creerQuete(campaignId, { type: a.type, titre: a.titre, description: a.description })
+        } else if (a.op === 'indice') {
+          await questService.ajouterIndice(campaignId, a.titre, a.texte)
+        } else if (a.op === 'accomplir') {
+          await questService.cloreQuete(campaignId, a.titre, 'accomplie')
+        } else if (a.op === 'echouer') {
+          await questService.cloreQuete(campaignId, a.titre, 'echouee')
+        }
       }
     } catch (err) {
       console.error('applyMjActions —', a.kind, err)

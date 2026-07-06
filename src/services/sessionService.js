@@ -1,5 +1,16 @@
 import { supabase } from '../lib/supabase'
 
+// Indique si une campagne existe déjà pour ce personnage (lecture seule, ne crée rien).
+export async function campagneExistePour(characterId) {
+  const { data, error } = await supabase
+    .from('campaigns')
+    .select('id')
+    .eq('character_id', characterId)
+    .limit(1)
+  if (error) throw error
+  return (data?.length ?? 0) > 0
+}
+
 // Récupère ou crée une session pour un personnage donné
 export async function getOrCreateSession(characterId) {
   const { data: { user } } = await supabase.auth.getUser()

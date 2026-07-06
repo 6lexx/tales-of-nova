@@ -7,6 +7,15 @@ import { buildSystemPrompt, sendMessage, parseResponse, buildAdminPrompt, sendAd
 import { lancerD20, formatPourIA } from '../services/diceService'
 import Narration from '../components/Narration'
 import { useAuth } from '../context/AuthContext'
+import QuestPanel from '../components/QuestPanel'
+import QuestWindow from '../components/QuestWindow'
+import * as questService from '../services/questService'
+import * as statusService from '../services/statusService'
+import * as progressionService from '../services/progressionService'
+import * as codexService from '../services/codexService'
+import { parseMjTags, applyMjActions } from '../services/mjTagParser'
+import { supabase } from '../lib/supabase'
+import FicheSortsCapacites from '../components/FicheSortsCapacites'
 
 const C = {
   bg: '#0a0b0f', bgPanel: '#0f1118', bgCard: '#13161f', bgInput: '#1a1e2b',
@@ -45,6 +54,11 @@ export default function Game() {
   const animRef = useRef(null)
   const filRef = useRef(null)
 
+  // Panel de quêtes
+  const [quetesActives, setQuetesActives] = useState([])
+  const [quetesArchivees, setQuetesArchivees] = useState([])
+  const [queteOuverte, setQueteOuverte] = useState(null) // fenêtre flottante
+
   // Mode admin (inspection) — historique éphémère, jamais persisté
   const [mode, setMode] = useState('mj')          // 'mj' | 'admin'
   const [adminMessages, setAdminMessages] = useState([])
@@ -64,6 +78,10 @@ export default function Game() {
   const [fichePos, setFichePos] = useState({ x: 260, y: 60 })
   const [ficheTab, setFicheTab] = useState('stats')
 
+  // Fiche liste des sorts et des compétences
+  const [ficheOuverte, setFicheOuverte] = useState(false)
+
+
   useEffect(() => {
     async function init() {
       try {
@@ -75,6 +93,7 @@ export default function Game() {
         setNoteTexte(s.notes || '')
         const msgs = await loadMessages(s.id)
         setMessages(msgs.map((m) => ({ role: m.role, content: m.content, id: m.id })))
+        await chargerQuetes(s.campaign_id)
         if (msgs.length === 0) await lancerPremierMessage(p, s)
       } catch (e) {
         setErreur(e.message)
@@ -93,6 +112,40 @@ export default function Game() {
   }, [messages, adminMessages, mode, loading])
 
   useEffect(() => () => clearInterval(animRef.current), [])
+
+  // DEBUG — à retirer avant prod. Helpers console, lisent la session au moment de l'appel.
+  useEffect(() => {
+    const s = () => sessionRef.current
+    const guard = (fn) => (...a) => {
+      if (!s()) { console.warn('Session pas encore chargée — ouvre une partie puis réessaie.'); return }
+      return fn(...a)
+    }
+    window.forcerQuete = guard(async (titre = 'Quête de test') => {
+      const { quetesCreees } = await traiterTagsMj(`[QUETE:creer|immediate|${titre}|Objectif de test depuis la console.]`, s())
+      setMessages((prev) => [...prev, ...quetesCreees.map((t) => ({ role: 'separator', content: t }))])
+    })
+    window.forcerIndice = guard((titre, texte = 'Un indice de test.') =>
+      traiterTagsMj(`[QUETE:indice|${titre}|${texte}]`, s()))
+    window.forcerClore = guard((titre, ok = true) =>
+      traiterTagsMj(`[QUETE:${ok ? 'accomplir' : 'echouer'}|${titre}]`, s()))
+    window.listerQuetesDebug = guard(() => questService.listerQuetes(s().campaign_id).then(console.log))
+    // Suppression directe en base (contourne le tag, purge réelle) puis refresh.
+    window.supprimerQuete = guard(async (titre) => {
+      const { error } = await supabase
+        .from('quests').delete()
+        .eq('campaign_id', s().campaign_id).eq('titre', titre)
+      if (error) return console.error('supprimerQuete —', error)
+      await chargerQuetes(s().campaign_id)
+      console.log(`Quête « ${titre} » supprimée.`)
+    })
+    window.viderQuetes = guard(async () => {
+      const { error } = await supabase.from('quests').delete().eq('campaign_id', s().campaign_id)
+      if (error) return console.error('viderQuetes —', error)
+      await chargerQuetes(s().campaign_id)
+      console.log('Toutes les quêtes supprimées.')
+    })
+    console.log('%cDebug quêtes prêt : forcerQuete(), forcerIndice(t,x), forcerClore(t,ok), supprimerQuete(t), viderQuetes(), listerQuetesDebug()', 'color:#c9a84c')
+  }, [])
 
   // Sauvegarde des notes avec debounce 1s
   const sauvegarderNotes = useCallback((texte) => {
@@ -149,12 +202,14 @@ export default function Game() {
   }
 
   async function lancerPremierMessage(p, s) {
-    const system = buildSystemPrompt(p, s)
+    const system = buildSystemPrompt(p, s, quetesActives)
     const intro = [{ role: 'user', content: "L'aventure commence." }]
     const texte = await sendMessage(intro, system)
-    const { texte: affichage, jet } = parseResponse(texte)
+    const { texte: affichage0, jet } = parseResponse(texte)
+    const { texte: affichage, quetesCreees } = await traiterTagsMj(affichage0, s)
     const msgMJ = { role: 'assistant', content: affichage }
-    setMessages([msgMJ])
+    const seps = quetesCreees.map((t) => ({ role: 'separator', content: t }))
+    setMessages([msgMJ, ...seps])
     await saveMessage(s.id, 'assistant', affichage)
     if (jet) ouvrirJet(jet)
   }
@@ -170,12 +225,14 @@ export default function Game() {
     await saveMessage(session.id, 'user', contenu)
     setLoading(true)
     try {
-      const system = buildSystemPrompt(perso, session)
-      const historique = nouveauxMessages.map((m) => ({ role: m.role, content: m.content }))
+      const system = buildSystemPrompt(perso, session, quetesActives)
+      const historique = nouveauxMessages.filter((m) => m.role === 'user' || m.role === 'assistant').map((m) => ({ role: m.role, content: m.content }))
       const texte = await sendMessage(historique, system)
-      const { texte: affichage, jet } = parseResponse(texte)
+      const { texte: affichage0, jet } = parseResponse(texte)
+      const { texte: affichage, quetesCreees } = await traiterTagsMj(affichage0, session)
       const msgMJ = { role: 'assistant', content: affichage }
-      setMessages((prev) => [...prev, msgMJ])
+      const seps = quetesCreees.map((t) => ({ role: 'separator', content: t }))
+      setMessages((prev) => [...prev, msgMJ, ...seps])
       await saveMessage(session.id, 'assistant', affichage)
       if (jet) ouvrirJet(jet)
     } catch (e) {
@@ -183,6 +240,37 @@ export default function Game() {
     } finally {
       setLoading(false)
     }
+  }
+
+  async function chargerQuetes(campaignId) {
+    if (!campaignId) return
+    try {
+      const { actives, archivees } = await questService.listerQuetes(campaignId)
+      setQuetesActives(actives)
+      setQuetesArchivees(archivees)
+    } catch (e) {
+      console.error('chargerQuetes —', e)
+    }
+  }
+
+  // Applique les tags mécaniques du MJ (dont [QUETE]) sur le texte de réponse,
+  // exécute les actions, rafraîchit les quêtes, et renvoie le texte nettoyé à afficher.
+  async function traiterTagsMj(texteBrut, s) {
+    const { texte, actions } = parseMjTags(texteBrut)
+    const quetesCreees = actions.filter((a) => a.kind === 'quest' && a.op === 'creer').map((a) => a.titre)
+    if (actions.length) {
+      try {
+        await applyMjActions(
+          actions,
+          { characterId, campaignId: s.campaign_id, sessionId: s.id, invokeClaude: sendMessage },
+          { statusService, progressionService, codexService, questService },
+        )
+      } catch (e) {
+        console.error('applyMjActions —', e)
+      }
+      await chargerQuetes(s.campaign_id)
+    }
+    return { texte, quetesCreees }
   }
 
   // Envoi en mode inspection — bypass total : pas de persistance, pas de parseResponse,
@@ -198,7 +286,7 @@ export default function Game() {
     try {
       const system = buildAdminPrompt(perso, session)
       const historique = [
-        ...messages.map((m) => ({ role: m.role, content: m.content })),
+        ...messages.filter((m) => m.role === 'user' || m.role === 'assistant').map((m) => ({ role: m.role, content: m.content })),
         ...nouveaux.map((m) => ({ role: m.role, content: m.content })),
       ]
       const texte = await sendAdminMessage(historique, system)
@@ -266,11 +354,13 @@ export default function Game() {
     await saveMessage(session.id, 'user', contenu)
     setLoading(true)
     try {
-      const system = buildSystemPrompt(perso, session)
-      const historique = nouveauxMessages.map((m) => ({ role: m.role, content: m.content }))
+      const system = buildSystemPrompt(perso, session, quetesActives)
+      const historique = nouveauxMessages.filter((m) => m.role === 'user' || m.role === 'assistant').map((m) => ({ role: m.role, content: m.content }))
       const texte = await sendMessage(historique, system)
-      const { texte: affichage, jet: prochainJet } = parseResponse(texte)
-      setMessages((prev) => [...prev, { role: 'assistant', content: affichage }])
+      const { texte: affichage0, jet: prochainJet } = parseResponse(texte)
+      const { texte: affichage, quetesCreees } = await traiterTagsMj(affichage0, session)
+      const seps = quetesCreees.map((t) => ({ role: 'separator', content: t }))
+      setMessages((prev) => [...prev, { role: 'assistant', content: affichage }, ...seps])
       await saveMessage(session.id, 'assistant', affichage)
       if (prochainJet) ouvrirJet(prochainJet)
     } catch (e) {
@@ -352,6 +442,10 @@ export default function Game() {
             <User size={13} />
             {ficheOpen ? 'Fermer la fiche' : 'Consulter la fiche'}
           </button>
+          <button style={S.grimoireBtn} onClick={() => setFicheOuverte(true)}>
+            <ScrollText size={13} />
+            Grimoire & Capacités
+          </button>
         </>}
       </aside>
 
@@ -385,12 +479,20 @@ export default function Game() {
           ) : (
             <>
               {messages.map((m, i) => (
-                <div key={i} style={{ ...S.bulle, ...(m.role === 'user' ? S.bulleJoueur : S.bulleMJ) }}>
-                  {m.role === 'assistant' && <div style={S.mjLabel}>✦ Maître du Jeu</div>}
-                  {m.role === 'assistant'
-                    ? <div style={S.bulleTexte}><Narration text={m.content} /></div>
-                    : <p style={S.bulleTexte}>{m.content}</p>}
-                </div>
+                m.role === 'separator' ? (
+                  <div key={i} style={S.sep}>
+                    <span style={S.sepLineL} />
+                    <span style={S.sepTxt}>✦ Nouvelle quête · {m.content}</span>
+                    <span style={S.sepLineR} />
+                  </div>
+                ) : (
+                  <div key={i} style={{ ...S.bulle, ...(m.role === 'user' ? S.bulleJoueur : S.bulleMJ) }}>
+                    {m.role === 'assistant' && <div style={S.mjLabel}>✦ Maître du Jeu</div>}
+                    {m.role === 'assistant'
+                      ? <div style={S.bulleTexte}><Narration text={m.content} /></div>
+                      : <p style={S.bulleTexte}>{m.content}</p>}
+                  </div>
+                )
               ))}
               {loading && (
                 <div style={{ ...S.bulle, ...S.bulleMJ }}>
@@ -453,7 +555,11 @@ export default function Game() {
       <aside style={S.sideRight}>
         <div style={S.rightSection}>
           <div style={S.rightTitle}><ScrollText size={14} /> Quêtes</div>
-          <p style={S.rightEmpty}>Aucune quête active.</p>
+          <QuestPanel
+            actives={quetesActives}
+            archivees={quetesArchivees}
+            onOuvrir={setQueteOuverte}
+          />
         </div>
         <div style={S.rightSection}>
           <div style={S.rightTitle}><Swords size={14} /> Inventaire</div>
@@ -568,7 +674,7 @@ export default function Game() {
                 <div style={S.ficheSection}>
                   <div style={S.ficheSectionTitle}>Jets de sauvegarde maîtrisés</div>
                   {(() => {
-                    const SAUV = { guerrier: ['FOR', 'CON'], mage: ['INT', 'SAG'], voleur: ['DEX', 'INT'], clerc: ['SAG', 'CHA'] }
+                    const SAUV = { guerrier: ['FOR', 'CON'], magicien: ['INT', 'SAG'], roublard: ['DEX', 'INT'], clerc: ['SAG', 'CHA'] }
                     const sauv = SAUV[(perso.classe || '').toLowerCase()] || []
                     return sauv.length > 0
                       ? <div style={S.ficheChips}>{sauv.map((s) => <span key={s} style={S.ficheChipGold}>{s}</span>)}</div>
@@ -628,8 +734,8 @@ export default function Game() {
                   {(() => {
                     const INFO = {
                       guerrier: { de: 'd10', prim: 'FOR / DEX', desc: 'Maître des armes et des armures. Combat polyvalent, résistance hors pair.', capacites: ['Second souffle (1/repos court)', 'Style de combat', 'Fougue (niv. 2)'] },
-                      mage: { de: 'd6', prim: 'INT', desc: 'Érudit des arcanes. Façonne la réalité par la puissance de l\'esprit.', capacites: ['Récupération arcanique (niv. 1)', 'Tradition arcanique (niv. 2)', 'Sorts préparés = INT + niveau'] },
-                      voleur: { de: 'd8', prim: 'DEX', desc: 'Expert de la discrétion et de la précision. Frappe vite, disparaît vite.', capacites: ['Expertise (×2 maîtrise sur 2 compétences)', 'Attaque sournoise', 'Argot des voleurs'] },
+                      magicien: { de: 'd6', prim: 'INT', desc: 'Érudit des arcanes. Façonne la réalité par la puissance de l\'esprit.', capacites: ['Récupération arcanique (niv. 1)', 'Tradition arcanique (niv. 2)', 'Sorts préparés = INT + niveau'] },
+                      roublard: { de: 'd8', prim: 'DEX', desc: 'Expert de la discrétion et de la précision. Frappe vite, disparaît vite.', capacites: ['Expertise (×2 maîtrise sur 2 compétences)', 'Attaque sournoise', 'Argot des voleurs'] },
                       clerc: { de: 'd8', prim: 'SAG', desc: 'Canal de la volonté divine. Soutien, soin, et foudre sacrée.', capacites: ['Sorts divins (SAG)', 'Domaine divin (niv. 1)', 'Renvoi des morts-vivants'] },
                     }
                     const info = INFO[(perso.classe || '').toLowerCase()]
@@ -658,6 +764,14 @@ export default function Game() {
 
           </div>
         </div>
+      )}
+
+      {/* ── FENÊTRE FLOTTANTE DE QUÊTE ── */}
+      <QuestWindow quete={queteOuverte} onClose={() => setQueteOuverte(null)} />
+
+      {/* ── GRIMOIRE & CAPACITÉS ── */}
+      {ficheOuverte && perso && (
+        <FicheSortsCapacites perso={perso} onClose={() => setFicheOuverte(false)} />
       )}
     </div>
   )
@@ -725,6 +839,10 @@ const S = {
   bulleMJ: { background: '#13161f', border: '1px solid #252a3a', alignSelf: 'flex-start' },
   bulleJoueur: { background: '#3d2f5a', border: '1px solid #4a3a6e', alignSelf: 'flex-end' },
   mjLabel: { fontSize: 10.5, color: '#c9a84c', letterSpacing: 1.5, marginBottom: 8, fontFamily: "'Cinzel', serif" },
+  sep: { display: 'flex', alignItems: 'center', gap: 12, margin: '2px 0' },
+  sepLineL: { flex: 1, height: 1, background: 'linear-gradient(90deg, transparent, #6b5520)' },
+  sepLineR: { flex: 1, height: 1, background: 'linear-gradient(90deg, #6b5520, transparent)' },
+  sepTxt: { fontSize: 11, color: '#c9a84c', letterSpacing: 2, fontFamily: "'Cinzel', serif", whiteSpace: 'nowrap' },
   bulleTexte: { margin: 0, fontSize: 15, color: '#e8e0f0', whiteSpace: 'pre-wrap' },
   erreur: { margin: '0 24px 8px', padding: '10px 14px', background: '#2a1010', border: '1px solid #b84040', borderRadius: 8, fontSize: 13, color: '#b84040' },
   saisieZone: { display: 'flex', gap: 10, padding: '14px 20px', borderTop: '1px solid #252a3a', background: '#0f1118' },
@@ -749,6 +867,7 @@ const S = {
   rightEmpty: { margin: 0, fontSize: 12.5, color: '#4a4a6a', fontStyle: 'italic' },
   noteBtn: { display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '9px 12px', background: '#1a1e2b', border: '1px solid #252a3a', borderRadius: 8, color: '#8a8aaa', fontSize: 13, cursor: 'pointer' },
   ficheBtn: { display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '9px 12px', background: '#1a1e2b', border: '1px solid #4a3a6e', borderRadius: 8, color: '#c9a84c', fontSize: 13, cursor: 'pointer', marginTop: 4 },
+  grimoireBtn: { display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '9px 12px', background: '#1a1428', border: '1px solid #4a3a6e', borderRadius: 8, color: '#b79ad6', fontSize: 13, cursor: 'pointer', marginTop: 4 },
   modeBtn: { display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '9px 12px', background: '#1a1e2b', border: '1px solid #6b5520', borderRadius: 8, color: '#c9a84c', fontSize: 13, cursor: 'pointer', marginTop: 4 },
   modeBtnActive: { background: 'linear-gradient(135deg, #2a1e0a 0%, #1a1206 100%)', border: '1px solid #c9a84c', color: '#e8c96a' },
   adminBanner: { display: 'flex', alignItems: 'center', padding: '9px 14px', background: '#1a160f', border: '1px solid #6b5520', borderRadius: 8, color: '#c9a84c', fontSize: 12, letterSpacing: 0.3, lineHeight: 1.4 },

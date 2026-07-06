@@ -3,6 +3,7 @@
 
 import { supabase } from '../lib/supabase'
 import { parseMjTags } from './mjTagParser'
+import { etatMecanique, modCarac, signe } from "./guerrierService.js";
 
 /* ════════════════════════════════════════════════════════════
    BLOCS DYNAMIQUES DU SYSTEM PROMPT
@@ -22,14 +23,28 @@ et attends librement la décision du joueur.
 Longueur : 3 à 5 paragraphes maximum.
 
 MISE EN FORME (avec parcimonie, pour l'impact — une touche ici et là, jamais à chaque phrase) :
-- Dialogues : encadre TOUTE parole de PNJ par des guillemets « … ».
+- Dialogues : encadre TOUTE parole de PNJ par des guillemets « … » et reviens a la ligne pour les mettre en valeur.
+- Utilise des police d'écriture différente selon les PNJ, les situations. Cela a pour but de donner de l'impact 
+  et de la vie au texte
 - Pour un PNJ marquant, précise une voix autour du dialogue : [voix=noble]« … »[/voix].
   Voix disponibles : commun (défaut, inutile de le marquer), noble (rois, nobles, commandants),
   divin (dieux, célestes, voix sacrées), sombre (démons, morts-vivants, fiélons).
 - Couleurs sémantiques : [danger]…[/danger] (menace, arme, péril), [sacré]…[/sacré] (divin, serment, relique),
   [arcane]…[/arcane] (magie, sortilège), [lieu]…[/lieu] (nom de lieu), [murmure]…[/murmure] (chuchotement),
   [cri]…[/cri] (hurlement, ordre), [ancien]…[/ancien] (inscription, prophétie, langue oubliée).
-- Emphase : **gras** pour un mot fort, *italique* pour une nuance.`
+- Emphase : **gras** pour un mot fort, *italique* pour une nuance.
+
+[JOURNAL DE QUÊTES — tag [QUETE]]
+Consigne au journal UNIQUEMENT les objectifs réellement poursuivis, avec un enjeu clair.
+Une simple piste évoquée n'est PAS une quête. Parcimonie : mieux vaut une quête juste que trois superflues.
+- [QUETE:creer|type|titre|description] — ouvre une quête. type ∈ immediate | principale | secondaire.
+  Le titre est l'identifiant : garde-le court et stable.
+- [QUETE:indice|titre|texte] — ajoute un indice à une quête existante (par titre).
+- [QUETE:accomplir|titre] — clôt une quête réussie.
+- [QUETE:echouer|titre] — clôt une quête échouée.
+Réfère-toi aux quêtes de [QUÊTES ACTIVES] et n'en duplique aucune.
+Émets ces tags en fin de réponse ; ils sont retirés du texte affiché.`
+
 }
 
 // --- Bloc (4) : logique des jets de dé ---
@@ -44,13 +59,42 @@ Tu recevras ensuite le résultat sous la forme [RESULTAT_JET: brut:<n> | total:<
 
 // --- Bloc (2) : données du personnage joueur ---
 export function buildBlocPerso(personnage = {}) {
-  const p = personnage
-  return `[PERSONNAGE DU JOUEUR]
-Nom : ${p.nom ?? '—'}
-Espèce : ${p.espece ?? '—'} | Classe : ${p.classe ?? '—'} ${p.sous_classe ?? ''} niv.${p.niveau ?? 1}
-Caractéristiques : FOR ${p.force ?? '—'}, DEX ${p.dexterite ?? '—'}, CON ${p.constitution ?? '—'}, INT ${p.intelligence ?? '—'}, SAG ${p.sagesse ?? '—'}, CHA ${p.charisme ?? '—'}
-PV : ${p.pv_actuels ?? '?'}/${p.pv_max ?? '?'}
-Historique : ${p.historique ?? '—'}`
+  const p = personnage;
+  const estGuerrier = (p.classe ?? "").toLowerCase().includes("guerrier");
+  const cap = (n) => n.charAt(0).toUpperCase() + n.slice(1);
+  const carac = (v) => (v == null ? "—" : `${v} (${signe(modCarac(v))})`);
+
+  let bloc = `[PERSONNAGE DU JOUEUR]
+Nom : ${p.nom ?? "—"}
+Espèce : ${p.espece ?? "—"} | Classe : ${p.classe ?? "—"} ${p.sous_classe ?? ""} niv.${p.niveau ?? 1}
+Caractéristiques : FOR ${carac(p.force)}, DEX ${carac(p.dexterite)}, CON ${carac(p.constitution)}, INT ${carac(p.intelligence)}, SAG ${carac(p.sagesse)}, CHA ${carac(p.charisme)}
+PV : ${p.pv_actuels ?? "?"}/${p.pv_max ?? "?"}`;
+
+  if (estGuerrier) {
+    const e = etatMecanique(p);
+    const sauv = Object.entries(e.sauvegardes).filter(([, s]) => s.maitrise)
+      .map(([c, s]) => `${c.slice(0, 3).toUpperCase()} ${signe(s.bonus)}`).join(", ");
+    const comps = Object.entries(e.competences).filter(([, c]) => c.maitrise)
+      .map(([n, c]) => `${cap(n)} ${signe(c.bonus)}`).join(", ");
+    const styles = e.styles.map((s) => s.nom).join(", ") || "—";
+    const attaques = e.attaques.map((a) =>
+      `  - ${a.nom} : ${signe(a.bonusAttaque)} pour toucher, ${a.degats}${a.notes.length ? ` (${a.notes.join(" ; ")})` : ""}`).join("\n");
+    const caps = e.capacites.map((c) =>
+      c.ressource ? `${c.nom} (${c.ressource.actuel}/${c.ressource.max})` : c.nom).join(", ");
+
+    bloc += `
+CA ${e.ca.valeur} | Init ${signe(e.initiative)} | Maîtrise ${signe(e.bonusMaitrise)}
+Sauvegardes maîtrisées : ${sauv || "—"}
+Compétences maîtrisées : ${comps || "—"}
+Style(s) de combat : ${styles}
+Attaques (${e.nombreAttaques} par action Attaquer, critique sur ${e.attaques[0]?.critique ?? "20"}) :
+${attaques}
+Capacités : ${caps}`;
+  }
+
+  bloc += `
+Historique : ${p.historique ?? "—"}`;
+  return bloc;
 }
 
 // --- Bloc (3) : contexte de la session ---
@@ -59,6 +103,24 @@ export function buildBlocSession(session = {}) {
   return `[CONTEXTE DE SESSION]
 Lieu : ${s.lieu_actuel ?? '—'}
 Situation : ${s.resume ?? "Début de l'aventure."}`
+}
+
+// Bloc dynamique : quêtes actives déjà consignées au journal.
+// Injecté dans le contexte de session à chaque tour → le MJ voit ce qui existe,
+// ne duplique pas, et référence une quête par son titre exact.
+export function buildBlocQuetes(quetesActives = []) {
+  if (!quetesActives.length) {
+    return `## Quêtes actives
+Aucune quête active pour l'instant.`
+  }
+  const lignes = quetesActives
+    .map((q) => `- « ${q.titre} » (${q.type})`)
+    .join('\n')
+  return `## Quêtes actives (déjà au journal — ne pas recréer)
+${lignes}
+
+Pour faire avancer l'une d'elles, référence-la par son titre EXACT :
+[QUETE:indice|titre|texte], [QUETE:accomplir|titre] ou [QUETE:echouer|titre].`
 }
 
 // --- Bloc (1 bis) : rôle admin (remplace le rôle + retire les jets) ---
@@ -87,12 +149,13 @@ LECTURE SEULE — tu n'émets AUCUNE balise, ni mécanique ni de style : pas de 
    ════════════════════════════════════════════════════════════ */
 
 // --- System prompt de narration (4 blocs) ---
-export function buildSystemPrompt(personnage = {}, session = {}) {
+export function buildSystemPrompt(personnage = {}, session = {}, quetesActives = []) {
   return [
     buildBlocRole(),
     buildBlocJets(),
     buildBlocPerso(personnage),
     buildBlocSession(session),
+    buildBlocQuetes(quetesActives),
   ].join('\n\n')
 }
 

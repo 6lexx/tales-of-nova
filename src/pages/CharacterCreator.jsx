@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   User, Sparkles, Swords, ScrollText, BookOpen, ShieldCheck,
@@ -6,6 +6,11 @@ import {
 } from "lucide-react";
 import { genererHistoire as genererHistoireIA } from "../services/histoireService";
 import { createCharacter } from "../services/characterService";
+import { initFicheGuerrier } from "../services/guerrierService";
+import { STYLES_COMBAT } from "../data/classes/guerrier.js";
+import { ARMURES } from "../data/equipement/armures.js";
+import { ARMES } from "../data/equipement/armes.js";
+import { supabase } from "../lib/supabase";
 
 /* ──────────────────────────────────────────────────────────
    CHARTE GRAPHIQUE — alignée sur l'écran de jeu principal
@@ -32,6 +37,12 @@ const C = {
 };
 
 /* ── DONNÉES DE JEU ───────────────────────────────────────── */
+/* Sous-races SRD dont les traits existent dans features (par id d'espèce) */
+const SUB_RACES = {
+  elfe: ["Haut-elfe", "Elfe des bois", "Elfe noir (Drow)"],
+  nain: ["Nain des collines", "Nain des montagnes"],
+};
+
 const ESPECES = [
   { id: "humain", nom: "Humain", desc: "Polyvalents, ambitieux, partout chez eux.", bonus: "+1 à toutes les caractéristiques", trait: "Don supplémentaire au niveau 1",
     bonusStats: { FOR: 1, DEX: 1, CON: 1, INT: 1, SAG: 1, CHA: 1 }, bonusLibres: 0 },
@@ -39,7 +50,7 @@ const ESPECES = [
     bonusStats: { DEX: 2, INT: 1 }, bonusLibres: 0 },
   { id: "nain", nom: "Nain", desc: "Robustes, tenaces, gardiens de la pierre.", bonus: "+2 CON · +1 FOR", trait: "Résistance au poison · Démarche assurée",
     bonusStats: { CON: 2, FOR: 1 }, bonusLibres: 0 },
-  { id: "orc", nom: "Orc", desc: "Puissants, endurants, jamais à terre.", bonus: "+2 FOR · +1 CON", trait: "Acharnement · Charge agressive",
+  { id: "orc", nom: "Demi-orc", desc: "Puissants, endurants, jamais à terre.", bonus: "+2 FOR · +1 CON", trait: "Acharnement · Charge agressive",
     bonusStats: { FOR: 2, CON: 1 }, bonusLibres: 0 },
   { id: "tieffelin", nom: "Tieffelin", desc: "Marqués par un héritage infernal.", bonus: "+2 CHA · +1 INT", trait: "Résistance au feu · Legs infernal",
     bonusStats: { CHA: 2, INT: 1 }, bonusLibres: 0 },
@@ -49,8 +60,8 @@ const ESPECES = [
 
 const CLASSES = [
   { id: "guerrier", nom: "Guerrier", icon: Swords, de: 10, prim: "FOR / DEX", desc: "Maître des armes et des armures.", sauv: ["FOR", "CON"] },
-  { id: "mage", nom: "Mage", icon: ScrollText, de: 6, prim: "INT", desc: "Érudit des arcanes, façonneur de sorts.", sauv: ["INT", "SAG"] },
-  { id: "voleur", nom: "Voleur", icon: Eye, de: 8, prim: "DEX", desc: "Discret, agile, mortel dans l'ombre.", sauv: ["DEX", "INT"] },
+  { id: "mage", nom: "Magicien", icon: ScrollText, de: 6, prim: "INT", desc: "Érudit des arcanes, façonneur de sorts.", sauv: ["INT", "SAG"] },
+  { id: "voleur", nom: "Roublard", icon: Eye, de: 8, prim: "DEX", desc: "Discret, agile, mortel dans l'ombre.", sauv: ["DEX", "INT"] },
   { id: "clerc", nom: "Clerc", icon: ShieldCheck, de: 8, prim: "SAG", desc: "Canalise la faveur d'une divinité.", sauv: ["SAG", "CHA"] },
 ];
 
@@ -172,6 +183,12 @@ export default function CharacterCreator() {
   const [lancers, setLancers] = useState([]);        // 6 valeurs pour la méthode "lancer"
   const [bonusChoisis, setBonusChoisis] = useState([]); // demi-elfe : +1 au choix ×2
   const [skills, setSkills] = useState([]);
+  const [sousEspece, setSousEspece] = useState(null); // sous-race choisie
+  const [sortsConnus, setSortsConnus] = useState([]); // slugs des sorts appris (casters)
+  const [sortsDispo, setSortsDispo] = useState([]);   // sorts niveau <=1 de la classe
+  const [styleCombat, setStyleCombat] = useState(null); // Guerrier : id du style
+  const [equip, setEquip] = useState({ armure: "", arme: "", bouclier: false }); // Guerrier
+  const selCss = { width: "100%", padding: "10px 12px", background: "#0f1116", border: "1px solid #2c313d", borderRadius: 8, color: "#e7e3d6", fontSize: 14 };
   const [langues, setLangues] = useState(["Commun"]);
   const [histoire, setHistoire] = useState({});
   const [perso, setPerso] = useState({});
@@ -183,6 +200,19 @@ export default function CharacterCreator() {
 
   const classe = CLASSES.find((c) => c.id === id.classe);
   const espece = ESPECES.find((e) => e.id === id.espece);
+
+  // Sorts disponibles au niveau 1 pour la classe (mineurs + niveau 1). Vide si non-caster.
+  useEffect(() => {
+    let annule = false;
+    setSortsConnus([]);
+    if (!classe?.nom) { setSortsDispo([]); return; }
+    supabase
+      .from("spells").select("slug, nom, niveau, ecole")
+      .contains("classes", [classe.nom]).lte("niveau", 1)
+      .order("niveau", { ascending: true }).order("nom", { ascending: true })
+      .then(({ data }) => { if (!annule) setSortsDispo(data || []); });
+    return () => { annule = true; };
+  }, [classe?.nom]);
 
   // Coût point-buy (uniquement en méthode "achat")
   const used = methode === "achat"
@@ -280,6 +310,36 @@ export default function CharacterCreator() {
     setForgeErreur("");
     setForgeLoading(true);
     try {
+      const ficheBase = {
+        alignement: id.alignement,
+        apparence: app,
+        sousEspece: SUB_RACES[espece?.id]?.includes(sousEspece) ? sousEspece : null,
+        sorts: sortsConnus,
+        competences: skills,
+        langues,
+        histoire,
+        personnalite: perso,
+        themes: tags,
+        bonusChoisis,
+      };
+      const ficheFinale =
+        classe?.id === "guerrier"
+          ? initFicheGuerrier(
+              { niveau: 1, sous_classe: id.sousClasse, fiche: ficheBase },
+              { styleCombat: styleCombat ? STYLES_COMBAT[styleCombat] : null, competences: skills },
+            )
+          : ficheBase;
+
+      if (classe?.id === "guerrier") {
+        ficheFinale.mecanique.equipement = {
+          armure: equip.armure || null,
+          bouclier: !!equip.bouclier,
+          armes: equip.arme
+            ? [{ ref: equip.arme, main: ARMES[equip.arme]?.proprietes?.deuxMains ? "deux_mains" : "une_main" }]
+            : [],
+        };
+      }
+
       await createCharacter({
         nom: id.nom,
         espece: espece?.nom,
@@ -295,16 +355,7 @@ export default function CharacterCreator() {
         charisme:     valeurFinale("CHA"),
         pv_max:     pdv !== "—" ? pdv : null,
         pv_actuels: pdv !== "—" ? pdv : null,
-        fiche: {
-          alignement: id.alignement,
-          apparence: app,
-          competences: skills,
-          langues,
-          histoire,
-          personnalite: perso,
-          themes: tags,
-          bonusChoisis,
-        },
+        fiche: ficheFinale,
       });
       navigate("/personnages");
     } catch (e) {
@@ -538,6 +589,76 @@ export default function CharacterCreator() {
                   ))}
                 </div>
               </Field>
+
+              {(SUB_RACES[espece?.id] || []).length > 0 && (
+                <Field label="Sous-race">
+                  <div style={S.tagRow}>
+                    {SUB_RACES[espece.id].map((sr) => (
+                      <button key={sr} onClick={() => setSousEspece(sr)}
+                        style={{ ...S.tag, ...(sousEspece === sr ? S.tagOn : {}) }}>
+                        {sousEspece === sr && <span style={S.dot} />}{sr}
+                      </button>
+                    ))}
+                  </div>
+                </Field>
+              )}
+
+              {sortsDispo.length > 0 && (
+                <Field label={`Sorts connus (${sortsConnus.length})`}>
+                  <div style={S.skillWrap}>
+                    {[0, 1].map((niv) => {
+                      const groupe = sortsDispo.filter((s) => s.niveau === niv);
+                      if (!groupe.length) return null;
+                      return (
+                        <div key={niv} style={S.skillGroup}>
+                          <div style={S.skillGroupTitle}>{niv === 0 ? "Sorts mineurs" : "Niveau 1"}</div>
+                          {groupe.map((s) => (
+                            <button key={s.slug} onClick={() => toggle(sortsConnus, setSortsConnus, s.slug)}
+                              style={{ ...S.skillChip, ...(sortsConnus.includes(s.slug) ? S.skillChipOn : {}) }}>
+                              {sortsConnus.includes(s.slug) && <span style={S.dot} />}{s.nom}
+                            </button>
+                          ))}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </Field>
+              )}
+
+              {classe?.id === "guerrier" && (
+                <Field label="Style de combat">
+                  <div style={S.tagRow}>
+                    {Object.values(STYLES_COMBAT).map((st) => (
+                      <button key={st.id} onClick={() => setStyleCombat(st.id)}
+                        title={st.description}
+                        style={{ ...S.tag, ...(styleCombat === st.id ? S.tagOn : {}) }}>{st.nom}</button>
+                    ))}
+                  </div>
+                </Field>
+              )}
+
+              {classe?.id === "guerrier" && (
+                <Field label="Équipement de départ">
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    <select value={equip.armure} onChange={(e) => setEquip({ ...equip, armure: e.target.value })} style={selCss}>
+                      <option value="">Sans armure</option>
+                      {Object.values(ARMURES).map((a) => (
+                        <option key={a.ref} value={a.ref}>{a.nom} — CA {a.ca} ({a.categorie})</option>
+                      ))}
+                    </select>
+                    <select value={equip.arme} onChange={(e) => setEquip({ ...equip, arme: e.target.value })} style={selCss}>
+                      <option value="">À mains nues</option>
+                      {Object.values(ARMES).map((w) => (
+                        <option key={w.ref} value={w.ref}>{w.nom} — {w.dm} {w.typeDegats}</option>
+                      ))}
+                    </select>
+                    <button onClick={() => setEquip({ ...equip, bouclier: !equip.bouclier })}
+                      style={{ ...S.tag, ...(equip.bouclier ? S.tagOn : {}), alignSelf: "flex-start" }}>
+                      {equip.bouclier && <span style={S.dot} />}Bouclier (+2 CA)
+                    </button>
+                  </div>
+                </Field>
+              )}
 
               <Field label="Langues">
                 <div style={S.tagRow}>
