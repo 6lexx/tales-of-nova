@@ -27,3 +27,6 @@ dist-ssr
 *.png binary
 *.jpg binary
 *.pdf binary
+.env
+
+.env
