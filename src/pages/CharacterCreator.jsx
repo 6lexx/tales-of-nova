@@ -186,6 +186,7 @@ export default function CharacterCreator() {
   const [sousEspece, setSousEspece] = useState(null); // sous-race choisie
   const [sortsConnus, setSortsConnus] = useState([]); // slugs des sorts appris (casters)
   const [sortsDispo, setSortsDispo] = useState([]);   // sorts niveau <=1 de la classe
+  const [survol, setSurvol] = useState(null);         // { sort, x, y } tooltip de sort
   const [styleCombat, setStyleCombat] = useState(null); // Guerrier : id du style
   const [equip, setEquip] = useState({ armure: "", arme: "", bouclier: false }); // Guerrier
   const selCss = { width: "100%", padding: "10px 12px", background: "#0f1116", border: "1px solid #2c313d", borderRadius: 8, color: "#e7e3d6", fontSize: 14 };
@@ -207,7 +208,7 @@ export default function CharacterCreator() {
     setSortsConnus([]);
     if (!classe?.nom) { setSortsDispo([]); return; }
     supabase
-      .from("spells").select("slug, nom, niveau, ecole")
+      .from("spells").select("slug, nom, niveau, ecole, description")
       .contains("classes", [classe.nom]).lte("niveau", 1)
       .order("niveau", { ascending: true }).order("nom", { ascending: true })
       .then(({ data }) => { if (!annule) setSortsDispo(data || []); });
@@ -251,6 +252,7 @@ export default function CharacterCreator() {
   const choisirEspece = (e) => {
     setId({ ...id, espece: e.id });
     setBonusChoisis([]); // reset des bonus libres quand l'espèce change
+    setSousEspece(null);
   };
 
   /* Bonus d'espèce réellement appliqués */
@@ -258,6 +260,23 @@ export default function CharacterCreator() {
   const libres = espece?.bonusLibres || 0;
   const bonusDe = (sid) => (racialFixed[sid] || 0) + (bonusChoisis.includes(sid) ? 1 : 0);
   const valeurFinale = (sid) => (stats[sid] == null ? null : stats[sid] + bonusDe(sid));
+
+  /* Caps de sélection au niveau 1 (spécifiques classe/race) */
+  const capSkills = ({ guerrier: 2, mage: 2, voleur: 4, clerc: 2 })[id.classe] ?? 2;
+  const capMineurs = ({ mage: 3, clerc: 3 })[id.classe] ?? 0;
+  const capNiveau1 =
+    id.classe === "mage" ? 6
+    : id.classe === "clerc" ? Math.max(1, mod(valeurFinale("SAG") ?? 10) + 1)
+    : 0;
+  const nbMineurs = sortsConnus.filter((sl) => sortsDispo.find((s) => s.slug === sl)?.niveau === 0).length;
+  const nbNiveau1 = sortsConnus.filter((sl) => sortsDispo.find((s) => s.slug === sl)?.niveau === 1).length;
+  const toggleSort = (slug, niveau) => {
+    if (sortsConnus.includes(slug)) { setSortsConnus(sortsConnus.filter((s) => s !== slug)); return; }
+    const cap = niveau === 0 ? capMineurs : capNiveau1;
+    const n = niveau === 0 ? nbMineurs : nbNiveau1;
+    if (n >= cap) return;
+    setSortsConnus([...sortsConnus, slug]);
+  };
 
   /* Stats dérivées (niveau 1) — calculées sur les valeurs finales (— si non assignées) */
   const finCon = valeurFinale("CON");
@@ -410,6 +429,19 @@ export default function CharacterCreator() {
                   ))}
                 </div>
               </Field>
+
+              {(SUB_RACES[id.espece] || []).length > 0 && (
+                <Field label="Sous-race">
+                  <div style={S.tagRow}>
+                    {SUB_RACES[id.espece].map((sr) => (
+                      <button key={sr} onClick={() => setSousEspece(sr)}
+                        style={{ ...S.tag, ...(sousEspece === sr ? S.tagOn : {}) }}>
+                        {sousEspece === sr && <span style={S.dot} />}{sr}
+                      </button>
+                    ))}
+                  </div>
+                </Field>
+              )}
 
               <Field label="Classe">
                 <div style={S.grid}>
@@ -574,50 +606,51 @@ export default function CharacterCreator() {
                 {classe ? <>Jets de sauvegarde maîtrisés : <b style={{ color: C.gold }}>{classe.sauv.join(" · ")}</b></> : "Choisissez une classe pour vos jets de sauvegarde."}
               </p>
 
-              <Field label="Compétences maîtrisées">
+              <Field label={`Compétences maîtrisées (${skills.length}/${capSkills})`}>
                 <div style={S.skillWrap}>
                   {STATS.filter((s) => COMPETENCES[s.id].length).map((s) => (
                     <div key={s.id} style={S.skillGroup}>
                       <div style={S.skillGroupTitle}>{s.nom}</div>
-                      {COMPETENCES[s.id].map((sk) => (
-                        <button key={sk} onClick={() => toggle(skills, setSkills, sk)}
-                          style={{ ...S.skillChip, ...(skills.includes(sk) ? S.skillChipOn : {}) }}>
-                          {skills.includes(sk) && <span style={S.dot} />}{sk}
-                        </button>
-                      ))}
+                      {COMPETENCES[s.id].map((sk) => {
+                        const sel = skills.includes(sk);
+                        const bloque = !sel && skills.length >= capSkills;
+                        return (
+                          <button key={sk} onClick={() => toggle(skills, setSkills, sk, capSkills)}
+                            style={{ ...S.skillChip, ...(sel ? S.skillChipOn : {}), opacity: bloque ? 0.4 : 1 }}>
+                            {sel && <span style={S.dot} />}{sk}
+                          </button>
+                        );
+                      })}
                     </div>
                   ))}
                 </div>
               </Field>
 
-              {(SUB_RACES[espece?.id] || []).length > 0 && (
-                <Field label="Sous-race">
-                  <div style={S.tagRow}>
-                    {SUB_RACES[espece.id].map((sr) => (
-                      <button key={sr} onClick={() => setSousEspece(sr)}
-                        style={{ ...S.tag, ...(sousEspece === sr ? S.tagOn : {}) }}>
-                        {sousEspece === sr && <span style={S.dot} />}{sr}
-                      </button>
-                    ))}
-                  </div>
-                </Field>
-              )}
-
               {sortsDispo.length > 0 && (
-                <Field label={`Sorts connus (${sortsConnus.length})`}>
+                <Field label="Sorts connus">
                   <div style={S.skillWrap}>
                     {[0, 1].map((niv) => {
                       const groupe = sortsDispo.filter((s) => s.niveau === niv);
                       if (!groupe.length) return null;
+                      const cap = niv === 0 ? capMineurs : capNiveau1;
+                      const n = niv === 0 ? nbMineurs : nbNiveau1;
                       return (
                         <div key={niv} style={S.skillGroup}>
-                          <div style={S.skillGroupTitle}>{niv === 0 ? "Sorts mineurs" : "Niveau 1"}</div>
-                          {groupe.map((s) => (
-                            <button key={s.slug} onClick={() => toggle(sortsConnus, setSortsConnus, s.slug)}
-                              style={{ ...S.skillChip, ...(sortsConnus.includes(s.slug) ? S.skillChipOn : {}) }}>
-                              {sortsConnus.includes(s.slug) && <span style={S.dot} />}{s.nom}
-                            </button>
-                          ))}
+                          <div style={S.skillGroupTitle}>{niv === 0 ? "Sorts mineurs" : "Niveau 1"} ({n}/{cap})</div>
+                          {groupe.map((s) => {
+                            const sel = sortsConnus.includes(s.slug);
+                            const bloque = !sel && n >= cap;
+                            return (
+                              <button key={s.slug}
+                                onClick={() => toggleSort(s.slug, niv)}
+                                onMouseEnter={(e) => setSurvol({ sort: s, x: e.clientX, y: e.clientY })}
+                                onMouseMove={(e) => setSurvol((v) => (v && v.sort.slug === s.slug ? { ...v, x: e.clientX, y: e.clientY } : v))}
+                                onMouseLeave={() => setSurvol(null)}
+                                style={{ ...S.skillChip, ...(sel ? S.skillChipOn : {}), opacity: bloque ? 0.4 : 1 }}>
+                                {sel && <span style={S.dot} />}{s.nom}
+                              </button>
+                            );
+                          })}
                         </div>
                       );
                     })}
@@ -776,6 +809,24 @@ export default function CharacterCreator() {
             </div>
           )}
         </main>
+
+        {survol && (
+          <div style={{
+            position: "fixed", zIndex: 200, width: 300, pointerEvents: "none",
+            left: Math.min(survol.x + 14, (typeof window !== "undefined" ? window.innerWidth : 1200) - 320),
+            top: survol.y + 14,
+            background: "#12141c", border: "1px solid #2c313d", borderRadius: 8,
+            padding: "10px 12px", boxShadow: "0 12px 34px rgba(0,0,0,.6)",
+          }}>
+            <div style={{ color: "#c9a84c", fontFamily: "'Cinzel', serif", fontSize: 13, marginBottom: 4 }}>{survol.sort.nom}</div>
+            <div style={{ color: "#8a8a99", fontSize: 11, marginBottom: 6 }}>
+              {survol.sort.niveau === 0 ? "Sort mineur" : `Niveau ${survol.sort.niveau}`}{survol.sort.ecole ? ` · ${survol.sort.ecole}` : ""}
+            </div>
+            <div style={{ color: "#d8d4c8", fontSize: 12, lineHeight: 1.5, maxHeight: 220, overflow: "hidden" }}>
+              {survol.sort.description || "—"}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
