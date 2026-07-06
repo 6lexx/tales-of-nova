@@ -16,6 +16,8 @@ import * as codexService from '../services/codexService'
 import { parseMjTags, applyMjActions } from '../services/mjTagParser'
 import { supabase } from '../lib/supabase'
 import FicheSortsCapacites from '../components/FicheSortsCapacites'
+import Inventaire from '../components/Inventaire'
+import { getBourse } from '../services/inventaireService'
 
 const C = {
   bg: '#0a0b0f', bgPanel: '#0f1118', bgCard: '#13161f', bgInput: '#1a1e2b',
@@ -80,6 +82,8 @@ export default function Game() {
 
   // Fiche liste des sorts et des compétences
   const [ficheOuverte, setFicheOuverte] = useState(false)
+  const [invOuvert, setInvOuvert] = useState(false)
+  const [bourse, setBourse] = useState({ po: 0, pa: 0, pc: 0 })
 
 
   useEffect(() => {
@@ -87,6 +91,7 @@ export default function Game() {
       try {
         const p = await getCharacter(characterId)
         setPerso(p)
+        setBourse(getBourse(p.fiche))
         const s = await getOrCreateSession(characterId)
         setSession(s)
         sessionRef.current = s
@@ -563,7 +568,16 @@ export default function Game() {
         </div>
         <div style={S.rightSection}>
           <div style={S.rightTitle}><Swords size={14} /> Inventaire</div>
-          <p style={S.rightEmpty}>Inventaire vide.</p>
+          <div style={S.bourseRow}>
+            {[['po', '#c9a84c'], ['pa', '#b8c0cc'], ['pc', '#b87333']].map(([k, col]) => (
+              <div key={k} style={S.bourseCell}>
+                <span style={{ ...S.bourseDot, background: col }} />
+                <span style={S.bourseVal}>{bourse[k] ?? 0}</span>
+                <span style={S.bourseLbl}>{k.toUpperCase()}</span>
+              </div>
+            ))}
+          </div>
+          <button style={S.invBtn} onClick={() => setInvOuvert(true)}>Ouvrir l'inventaire</button>
         </div>
         <div style={S.rightSection}>
           <button style={S.noteBtn} onClick={() => setNoteOpen((v) => !v)}>
@@ -773,6 +787,11 @@ export default function Game() {
       {ficheOuverte && perso && (
         <FicheSortsCapacites perso={perso} onClose={() => setFicheOuverte(false)} />
       )}
+
+      {/* ── INVENTAIRE ── */}
+      {invOuvert && perso && (
+        <Inventaire perso={perso} onBourse={setBourse} onClose={() => setInvOuvert(false)} />
+      )}
     </div>
   )
 }
@@ -868,6 +887,12 @@ const S = {
   noteBtn: { display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '9px 12px', background: '#1a1e2b', border: '1px solid #252a3a', borderRadius: 8, color: '#8a8aaa', fontSize: 13, cursor: 'pointer' },
   ficheBtn: { display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '9px 12px', background: '#1a1e2b', border: '1px solid #4a3a6e', borderRadius: 8, color: '#c9a84c', fontSize: 13, cursor: 'pointer', marginTop: 4 },
   grimoireBtn: { display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '9px 12px', background: '#1a1428', border: '1px solid #4a3a6e', borderRadius: 8, color: '#b79ad6', fontSize: 13, cursor: 'pointer', marginTop: 4 },
+  bourseRow: { display: 'flex', gap: 8, marginBottom: 10 },
+  bourseCell: { flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, padding: '7px 2px', background: '#13161f', border: '1px solid #252a3a', borderRadius: 8 },
+  bourseDot: { width: 9, height: 9, borderRadius: '50%' },
+  bourseVal: { fontSize: 14, fontWeight: 700, fontFamily: "'Cinzel', serif", color: '#e8e0f0' },
+  bourseLbl: { fontSize: 8.5, color: '#4a4a6a', letterSpacing: 1 },
+  invBtn: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, width: '100%', padding: '9px 12px', background: '#1a1e2b', border: '1px solid #252a3a', borderRadius: 8, color: '#8a8aaa', fontSize: 13, cursor: 'pointer' },
   modeBtn: { display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '9px 12px', background: '#1a1e2b', border: '1px solid #6b5520', borderRadius: 8, color: '#c9a84c', fontSize: 13, cursor: 'pointer', marginTop: 4 },
   modeBtnActive: { background: 'linear-gradient(135deg, #2a1e0a 0%, #1a1206 100%)', border: '1px solid #c9a84c', color: '#e8c96a' },
   adminBanner: { display: 'flex', alignItems: 'center', padding: '9px 14px', background: '#1a160f', border: '1px solid #6b5520', borderRadius: 8, color: '#c9a84c', fontSize: 12, letterSpacing: 0.3, lineHeight: 1.4 },

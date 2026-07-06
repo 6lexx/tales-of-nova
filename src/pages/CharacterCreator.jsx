@@ -11,6 +11,7 @@ import { STYLES_COMBAT } from "../data/classes/guerrier.js";
 import { ARMURES } from "../data/equipement/armures.js";
 import { ARMES } from "../data/equipement/armes.js";
 import { supabase } from "../lib/supabase";
+import { equiperPaquetageDepart } from "../services/inventaireService";
 
 /* ──────────────────────────────────────────────────────────
    CHARTE GRAPHIQUE — alignée sur l'écran de jeu principal
@@ -359,7 +360,7 @@ export default function CharacterCreator() {
         };
       }
 
-      await createCharacter({
+      const nouveau = await createCharacter({
         nom: id.nom,
         espece: espece?.nom,
         classe: classe?.nom,
@@ -376,6 +377,8 @@ export default function CharacterCreator() {
         pv_actuels: pdv !== "—" ? pdv : null,
         fiche: ficheFinale,
       });
+      // Paquetage de l'aventurier + bourse de départ (classe + historique).
+      await equiperPaquetageDepart(nouveau.id, { classe: classe?.nom, historique: id.historique });
       navigate("/personnages");
     } catch (e) {
       setForgeErreur(e.message);
