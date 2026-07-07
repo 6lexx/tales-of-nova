@@ -11,7 +11,7 @@ import { STYLES_COMBAT } from "../data/classes/guerrier.js";
 import { ARMURES } from "../data/equipement/armures.js";
 import { ARMES } from "../data/equipement/armes.js";
 import { supabase } from "../lib/supabase";
-import { equiperPaquetageDepart } from "../services/inventaireService";
+import { equiperPaquetageDepart, ajouter, equiper } from "../services/inventaireService";
 
 /* ──────────────────────────────────────────────────────────
    CHARTE GRAPHIQUE — alignée sur l'écran de jeu principal
@@ -346,19 +346,9 @@ export default function CharacterCreator() {
         classe?.id === "guerrier"
           ? initFicheGuerrier(
               { niveau: 1, sous_classe: id.sousClasse, fiche: ficheBase },
-              { styleCombat: styleCombat ? STYLES_COMBAT[styleCombat] : null, competences: skills },
+              { styleCombat: styleCombat || null, competences: skills },
             )
           : ficheBase;
-
-      if (classe?.id === "guerrier") {
-        ficheFinale.mecanique.equipement = {
-          armure: equip.armure || null,
-          bouclier: !!equip.bouclier,
-          armes: equip.arme
-            ? [{ ref: equip.arme, main: ARMES[equip.arme]?.proprietes?.deuxMains ? "deux_mains" : "une_main" }]
-            : [],
-        };
-      }
 
       const nouveau = await createCharacter({
         nom: id.nom,
@@ -379,6 +369,22 @@ export default function CharacterCreator() {
       });
       // Paquetage de l'aventurier + bourse de départ (classe + historique).
       await equiperPaquetageDepart(nouveau.id, { classe: classe?.nom, historique: id.historique });
+
+      // Guerrier : arme/armure/bouclier choisis → inventaire + équipés (recompose mecanique).
+      if (classe?.id === "guerrier") {
+        if (equip.armure) {
+          const a = await ajouter(nouveau.id, { categorie: "armure", ref: equip.armure, nom: ARMURES[equip.armure]?.nom || equip.armure });
+          await equiper(nouveau.id, a.id, "armure");
+        }
+        if (equip.bouclier) {
+          const b = await ajouter(nouveau.id, { categorie: "armure", ref: "bouclier", nom: "Bouclier" });
+          await equiper(nouveau.id, b.id, "bouclier");
+        }
+        if (equip.arme) {
+          const w = await ajouter(nouveau.id, { categorie: "arme", ref: equip.arme, nom: ARMES[equip.arme]?.nom || equip.arme });
+          await equiper(nouveau.id, w.id, "main");
+        }
+      }
       navigate("/personnages");
     } catch (e) {
       setForgeErreur(e.message);

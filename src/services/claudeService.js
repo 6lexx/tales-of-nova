@@ -52,8 +52,10 @@ export function buildBlocJets() {
   return `[LOGIQUE DES JETS]
 Quand une action exige un jet de dé, émets un tag SUR SA PROPRE LIGNE au format :
 [JET: <caractéristique> (<compétence si pertinent>) DD <valeur si tu la révèles>]
-Tu recevras ensuite le résultat sous la forme [RESULTAT_JET: brut:<n> | total:<n>] :
-- brut 1 = échec critique, brut 20 = réussite critique (quel que soit le total)
+Puis ARRÊTE ta réponse : n'enchaîne PAS la conséquence dans le même message, attends le résultat du système.
+Tu recevras le résultat UNIQUEMENT par ce canal, sous la forme [RESULTAT_JET: brut:<n> | total:<n>] :
+- N'écris JAMAIS [RESULTAT_JET] toi-même et n'invente JAMAIS de valeur de dé (brut/total). Les jets viennent exclusivement du joueur.
+- brut 1 = échec critique, brut 20 = réussite critique (quel que soit le total).
 - sinon, compare le total au DD et raconte la conséquence selon la marge.`
 }
 
@@ -124,6 +126,34 @@ Pour faire avancer l'une d'elles, référence-la par son titre EXACT :
 }
 
 // --- Bloc (1 bis) : rôle admin (remplace le rôle + retire les jets) ---
+export function buildBlocInventaire(inventaire = [], bourse = {}) {
+  const b = bourse || {}
+  const pieces = `${b.po ?? 0} po, ${b.pa ?? 0} pa, ${b.pc ?? 0} pc`
+  if (!inventaire.length) return `[INVENTAIRE]\nBourse : ${pieces}\nSac vide.`
+  const fmt = (i) => `- ${i.nom}${i.quantite > 1 ? ` ×${i.quantite}` : ''}${i.equipe ? ` (équipé${i.emplacement ? ` : ${i.emplacement}` : ''})` : ''}`
+  const eq = inventaire.filter((i) => i.equipe)
+  const sac = inventaire.filter((i) => !i.equipe)
+  const lignes = []
+  if (eq.length) { lignes.push('Équipé :'); eq.forEach((i) => lignes.push(fmt(i))) }
+  lignes.push('Sac :')
+  ;(sac.length ? sac : [{ nom: '(rien)' }]).forEach((i) => lignes.push(fmt(i)))
+  return `[INVENTAIRE]\nBourse : ${pieces}\n${lignes.join('\n')}\n\nLe personnage possède réellement ces objets : autorise leur usage. S'il tente d'utiliser un objet absent de cette liste, signale-le au lieu de l'autoriser. Quand un objet est consommé, lancé, donné ou perdu, émets [OBJET:retirer|nom|quantite]. Pour un gain de butin, émets [OBJET:ajouter|nom|quantite|description] et pour des pièces [OR:po|pa|pc].`
+}
+
+export function buildBlocTags() {
+  return `[TAGS MÉCANIQUES]
+À la fin de ta réponse, quand la fiction le justifie, émets les tags suivants (retirés du texte affiché) pour synchroniser l'état du jeu. N'ANNONCE PAS de changement chiffré (PV, or, objet) sans émettre le tag correspondant.
+- [PV:-3] ou [PV:9] : perte ou gain de points de vie (delta signé). OBLIGATOIRE dès qu'un PV change. Ne donne PAS le total « X/Y » dans le texte — l'interface l'affiche ; décris la blessure ou le soulagement, pas les chiffres.
+- [OBJET:retirer|nom|quantite] : un objet consommé, lancé, donné ou perdu (nom EXACT de l'inventaire).
+- [OBJET:ajouter|nom|quantite|description] : butin gagné.
+- [OR:po|pa|pc] : gain/perte de pièces (deltas signés, ex. [OR:50] ou [OR:-10]).
+- [CONDITION:add|cle] / [CONDITION:remove|cle] : état (empoisonné, à terre, etc.).
+- [REPOS:court] / [REPOS:long] : récupération.
+- [QUETE:creer|type|titre|description], [QUETE:indice|titre|texte], [QUETE:accomplir|titre], [QUETE:echouer|titre].
+- [PALIER: niveau:X | raison:"..."] : montée de niveau, aux moments clés cohérents avec l'histoire.
+- [CODEX:...], [RECAP] : enrichissement et récapitulatif.`
+}
+
 export function buildBlocRoleAdmin() {
   return `[MODE ADMIN — INSPECTION]
 Tu sors de ton rôle de narrateur. Tu es en mode introspection game-design, destiné au
@@ -149,13 +179,15 @@ LECTURE SEULE — tu n'émets AUCUNE balise, ni mécanique ni de style : pas de 
    ════════════════════════════════════════════════════════════ */
 
 // --- System prompt de narration (4 blocs) ---
-export function buildSystemPrompt(personnage = {}, session = {}, quetesActives = []) {
+export function buildSystemPrompt(personnage = {}, session = {}, quetesActives = [], inventaire = [], bourse = {}) {
   return [
     buildBlocRole(),
     buildBlocJets(),
     buildBlocPerso(personnage),
     buildBlocSession(session),
     buildBlocQuetes(quetesActives),
+    buildBlocInventaire(inventaire, bourse),
+    buildBlocTags(),
   ].join('\n\n')
 }
 

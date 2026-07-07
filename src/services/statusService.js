@@ -113,3 +113,24 @@ export async function applyRest(characterId, type = 'long') {
 
   return { type, restored: toRestore.map((r) => r.resource_key) }
 }
+
+// Ajuste les PV courants (delta signé), borné entre 0 et pv_max. MJ : [PV:delta].
+export async function ajusterPV(characterId, delta) {
+  const { data, error: eSel } = await supabase
+    .from('characters').select('pv_actuels, pv_max').eq('id', characterId).single()
+  if (eSel) throw eSel
+  if (!data) return
+  const pv = Math.max(0, Math.min(data.pv_max ?? 0, (data.pv_actuels ?? 0) + delta))
+  const { error } = await supabase.from('characters').update({ pv_actuels: pv }).eq('id', characterId)
+  if (error) throw error
+  return pv
+}
+
+// Fixe les PV courants à une valeur absolue (filet : total "N/max" écrit en prose).
+export async function setPV(characterId, valeur) {
+  const { data } = await supabase.from('characters').select('pv_max').eq('id', characterId).single()
+  const pv = Math.max(0, Math.min(data?.pv_max ?? valeur, valeur))
+  const { error } = await supabase.from('characters').update({ pv_actuels: pv }).eq('id', characterId)
+  if (error) throw error
+  return pv
+}

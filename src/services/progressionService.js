@@ -5,12 +5,13 @@ import { supabase } from '../lib/supabase'
 // =====================================================================
 // Le MJ propose un palier via le tag [PALIER: niveau:X | raison:"..."].
 // On l'enregistre non appliqué ; le joueur valide via l'écran de level-up,
-// ce qui met à jour characters.level.
+// ce qui met à jour characters.niveau.
 
 export async function proposeMilestone(characterId, toLevel, raison, campaignId = null) {
+  const { data: { user } } = await supabase.auth.getUser()
   const { data: char, error: e1 } = await supabase
     .from('characters')
-    .select('level')
+    .select('niveau')
     .eq('id', characterId)
     .single()
   if (e1) throw e1
@@ -20,7 +21,8 @@ export async function proposeMilestone(characterId, toLevel, raison, campaignId 
     .insert({
       character_id: characterId,
       campaign_id: campaignId,
-      from_level: char.level,
+      user_id: user.id,
+      from_level: char.niveau,
       to_level: toLevel,
       raison,
       applique: false,
@@ -50,7 +52,7 @@ export async function getPendingMilestone(characterId) {
 export async function applyMilestone(milestoneId, characterId, toLevel, choices = {}) {
   const { error: e1 } = await supabase
     .from('characters')
-    .update({ level: toLevel, ...choices })
+    .update({ niveau: toLevel, ...choices })
     .eq('id', characterId)
   if (e1) throw e1
 

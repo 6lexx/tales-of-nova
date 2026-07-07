@@ -14,9 +14,11 @@
 //   [QUETE:indice|titre|texte]
 //   [QUETE:accomplir|titre]
 //   [QUETE:echouer|titre]
+//   [OBJET:nom|quantite|description]  (quantite/description optionnels)
+//   [OR:po|pa|pc]  (deltas signés, pa/pc optionnels ; ex. [OR:50] ou [OR:-10|5])
 //   (QUETE = grammaire positionnelle, séparateur "|", identification par titre)
 
-const TAG_RE = /\[(CONDITION|REPOS|PALIER|CODEX|RECAP|QUETE)(?::([^\]]*))?\]/g
+const TAG_RE = /\[(CONDITION|REPOS|PALIER|CODEX|RECAP|QUETE|OBJET|OR|PV)(?::([^\]]*))?\]/gi
 
 // "cle:empoisonne | source:\"piège\" | duree:3 rounds" -> {cle, source, duree}
 function parseFields(raw) {
@@ -35,6 +37,7 @@ function parseFields(raw) {
 export function parseMjTags(text) {
   const actions = []
   const cleaned = text.replace(TAG_RE, (_, type, body) => {
+    type = (type || '').toUpperCase()
     const f = parseFields(body)
     switch (type) {
       case 'CONDITION':
@@ -85,6 +88,27 @@ export function parseMjTags(text) {
         }
         break
       }
+      case 'OBJET': {
+        const seg = (body || '').split('|').map((s) => s.trim().replace(/^"|"$/g, ''))
+        const verbe = (seg[0] || '').toLowerCase()
+        if (verbe === 'retirer' && seg[1]) {
+          actions.push({ kind: 'objet', op: 'retirer', nom: seg[1], quantite: parseInt(seg[2], 10) || 1 })
+        } else {
+          const d = verbe === 'ajouter' ? 1 : 0
+          if (seg[d]) actions.push({ kind: 'objet', op: 'ajouter', nom: seg[d], quantite: parseInt(seg[d + 1], 10) || 1, description: seg[d + 2] || null })
+        }
+        break
+      }
+      case 'OR': {
+        const seg = (body || '').split('|').map((s) => parseInt(s.trim(), 10) || 0)
+        if (seg.some((n) => n !== 0)) actions.push({ kind: 'or', po: seg[0] || 0, pa: seg[1] || 0, pc: seg[2] || 0 })
+        break
+      }
+      case 'PV': {
+        const n = parseInt((body || '').trim(), 10)
+        if (!Number.isNaN(n) && n !== 0) actions.push({ kind: 'pv', delta: n })
+        break
+      }
     }
     return '' // retire le tag du texte affiché
   })
@@ -96,7 +120,7 @@ export function parseMjTags(text) {
 // après réception de la réponse MJ.
 export async function applyMjActions(actions, ctx, services) {
   const { characterId, campaignId, sessionId, invokeClaude } = ctx
-  const { statusService, progressionService, codexService, questService } = services
+  const { statusService, progressionService, codexService, questService, inventaireService } = services
 
   for (const a of actions) {
     try {
@@ -132,6 +156,13 @@ export async function applyMjActions(actions, ctx, services) {
         } else if (a.op === 'echouer') {
           await questService.cloreQuete(campaignId, a.titre, 'echouee')
         }
+      } else if (a.kind === 'objet') {
+        if (a.op === 'retirer') await inventaireService?.retirerParNom(characterId, a.nom, a.quantite)
+        else await inventaireService?.ajouter(characterId, { categorie: 'commun', nom: a.nom, quantite: a.quantite, description: a.description })
+      } else if (a.kind === 'or') {
+        await inventaireService?.crediterBourse(characterId, { po: a.po, pa: a.pa, pc: a.pc })
+      } else if (a.kind === 'pv') {
+        await statusService?.ajusterPV(characterId, a.delta)
       }
     } catch (err) {
       console.error('applyMjActions —', a.kind, err)

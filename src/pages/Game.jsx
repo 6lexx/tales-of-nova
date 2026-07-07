@@ -17,7 +17,10 @@ import { parseMjTags, applyMjActions } from '../services/mjTagParser'
 import { supabase } from '../lib/supabase'
 import FicheSortsCapacites from '../components/FicheSortsCapacites'
 import Inventaire from '../components/Inventaire'
-import { getBourse } from '../services/inventaireService'
+import * as inventaireService from '../services/inventaireService'
+const { getBourse } = inventaireService
+import MonteeNiveau from '../components/MonteeNiveau'
+import { getPendingMilestone } from '../services/progressionService'
 
 const C = {
   bg: '#0a0b0f', bgPanel: '#0f1118', bgCard: '#13161f', bgInput: '#1a1e2b',
@@ -84,6 +87,8 @@ export default function Game() {
   const [ficheOuverte, setFicheOuverte] = useState(false)
   const [invOuvert, setInvOuvert] = useState(false)
   const [bourse, setBourse] = useState({ po: 0, pa: 0, pc: 0 })
+  const [invRefresh, setInvRefresh] = useState(0)
+  const [milestone, setMilestone] = useState(null)
 
 
   useEffect(() => {
@@ -92,6 +97,7 @@ export default function Game() {
         const p = await getCharacter(characterId)
         setPerso(p)
         setBourse(getBourse(p.fiche))
+        setMilestone(await getPendingMilestone(characterId))
         const s = await getOrCreateSession(characterId)
         setSession(s)
         sessionRef.current = s
@@ -149,7 +155,17 @@ export default function Game() {
       await chargerQuetes(s().campaign_id)
       console.log('Toutes les quêtes supprimées.')
     })
-    console.log('%cDebug quêtes prêt : forcerQuete(), forcerIndice(t,x), forcerClore(t,ok), supprimerQuete(t), viderQuetes(), listerQuetesDebug()', 'color:#c9a84c')
+    window.forcerLoot = guard((tags = '[OR:50][OBJET:Potion de soins|2|Rend 2d4+2 PV]') => traiterTagsMj(tags, s()))
+    window.forcerPalier = guard(async (niv) => {
+      await progressionService.proposeMilestone(characterId, niv || 2, 'Palier de test')
+      setMilestone(await getPendingMilestone(characterId))
+    })
+    window.testPV = guard(async (d = -10) => {
+      const v = await statusService.ajusterPV(characterId, d)
+      console.log('ajusterPV →', v)
+      setPerso(await getCharacter(characterId))
+    })
+    console.log('%cDebug prêt : forcerQuete(), forcerLoot(), forcerPalier(niv), viderQuetes(), listerQuetesDebug()', 'color:#c9a84c')
   }, [])
 
   // Sauvegarde des notes avec debounce 1s
@@ -207,7 +223,8 @@ export default function Game() {
   }
 
   async function lancerPremierMessage(p, s) {
-    const system = buildSystemPrompt(p, s, quetesActives)
+    const inv = await inventaireService.listerInventaire(characterId).catch(() => [])
+    const system = buildSystemPrompt(p, s, quetesActives, inv, getBourse(p.fiche))
     const intro = [{ role: 'user', content: "L'aventure commence." }]
     const texte = await sendMessage(intro, system)
     const { texte: affichage0, jet } = parseResponse(texte)
@@ -230,7 +247,8 @@ export default function Game() {
     await saveMessage(session.id, 'user', contenu)
     setLoading(true)
     try {
-      const system = buildSystemPrompt(perso, session, quetesActives)
+      const inv = await inventaireService.listerInventaire(characterId).catch(() => [])
+      const system = buildSystemPrompt(perso, session, quetesActives, inv, bourse)
       const historique = nouveauxMessages.filter((m) => m.role === 'user' || m.role === 'assistant').map((m) => ({ role: m.role, content: m.content }))
       const texte = await sendMessage(historique, system)
       const { texte: affichage0, jet } = parseResponse(texte)
@@ -268,12 +286,31 @@ export default function Game() {
         await applyMjActions(
           actions,
           { characterId, campaignId: s.campaign_id, sessionId: s.id, invokeClaude: sendMessage },
-          { statusService, progressionService, codexService, questService },
+          { statusService, progressionService, codexService, questService, inventaireService },
         )
       } catch (e) {
         console.error('applyMjActions —', e)
       }
       await chargerQuetes(s.campaign_id)
+      if (actions.some((a) => a.kind === 'objet' || a.kind === 'or')) {
+        try { setBourse(await inventaireService.chargerBourse(characterId)) } catch { /* noop */ }
+        setInvRefresh((k) => k + 1)
+      }
+      if (actions.some((a) => a.kind === 'milestone')) {
+        try { setMilestone(await getPendingMilestone(characterId)) } catch { /* noop */ }
+      }
+      let pvMaj = actions.some((a) => a.kind === 'pv' || a.kind === 'rest' || a.kind === 'condition')
+      // Filet : le MJ écrit parfois le total "N/max" en prose sans tag → on synchronise.
+      if (!actions.some((a) => a.kind === 'pv') && perso?.pv_max) {
+        const m = texte.match(new RegExp(`(\\d{1,5})\\s*/\\s*${perso.pv_max}\\b`))
+        if (m) {
+          const n = parseInt(m[1], 10)
+          if (n >= 0 && n <= perso.pv_max && n !== perso.pv_actuels) {
+            try { await statusService.setPV(characterId, n); pvMaj = true } catch { /* noop */ }
+          }
+        }
+      }
+      if (pvMaj) { try { setPerso(await getCharacter(characterId)) } catch { /* noop */ } }
     }
     return { texte, quetesCreees }
   }
@@ -359,7 +396,8 @@ export default function Game() {
     await saveMessage(session.id, 'user', contenu)
     setLoading(true)
     try {
-      const system = buildSystemPrompt(perso, session, quetesActives)
+      const inv = await inventaireService.listerInventaire(characterId).catch(() => [])
+      const system = buildSystemPrompt(perso, session, quetesActives, inv, bourse)
       const historique = nouveauxMessages.filter((m) => m.role === 'user' || m.role === 'assistant').map((m) => ({ role: m.role, content: m.content }))
       const texte = await sendMessage(historique, system)
       const { texte: affichage0, jet: prochainJet } = parseResponse(texte)
@@ -373,6 +411,11 @@ export default function Game() {
     } finally {
       setLoading(false)
     }
+  }
+
+  async function onMonteeFait() {
+    try { const p = await getCharacter(characterId); setPerso(p); setBourse(getBourse(p.fiche)) } catch { /* noop */ }
+    setMilestone(null)
   }
 
   const onSend = () => (mode === 'admin' ? envoyerAdmin() : envoyer())
@@ -790,7 +833,12 @@ export default function Game() {
 
       {/* ── INVENTAIRE ── */}
       {invOuvert && perso && (
-        <Inventaire perso={perso} onBourse={setBourse} onClose={() => setInvOuvert(false)} />
+        <Inventaire perso={perso} bourse={bourse} onBourse={setBourse} refreshKey={invRefresh} onClose={() => setInvOuvert(false)} />
+      )}
+
+      {/* ── MONTÉE DE NIVEAU ── */}
+      {milestone && perso && (
+        <MonteeNiveau perso={perso} milestone={milestone} onDone={onMonteeFait} />
       )}
     </div>
   )
@@ -904,7 +952,7 @@ const S = {
   ficheTitleBar: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '11px 16px', background: '#1a1228', borderBottom: '1px solid #252a3a', cursor: 'grab', userSelect: 'none', flexShrink: 0 },
   ficheTitleTxt: { display: 'flex', alignItems: 'center', fontSize: 13, color: '#c9a84c', fontFamily: "'Cinzel', serif", letterSpacing: 1, fontWeight: 600 },
   ficheTabs: { display: 'flex', borderBottom: '1px solid #252a3a', background: '#13161f', flexShrink: 0 },
-  ficheTab: { flex: 1, padding: '9px 4px', border: 'none', borderBottom: '2px solid transparent', background: 'transparent', color: '#8a8aaa', fontSize: 12, cursor: 'pointer', fontFamily: "'Inter', sans-serif" },
+  ficheTab: { flex: 1, padding: '9px 4px', borderTop: 'none', borderLeft: 'none', borderRight: 'none', borderBottom: '2px solid transparent', background: 'transparent', color: '#8a8aaa', fontSize: 12, cursor: 'pointer', fontFamily: "'Inter', sans-serif" },
   ficheTabActive: { color: '#c9a84c', borderBottom: '2px solid #c9a84c', background: '#0f1118' },
   ficheBody: { overflowY: 'auto', flex: 1, padding: '16px' },
   ficheCol: { display: 'flex', flexDirection: 'column', gap: 0 },

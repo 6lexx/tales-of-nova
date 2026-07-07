@@ -21,17 +21,16 @@ export async function listerInventaire(characterId) {
 /* ── Ajout / retrait ── */
 export async function ajouter(characterId, item) {
   const { categorie = "commun", ref = null, nom, description = null, quantite = 1, meta = {} } = item;
-  // Empilement si même ref+catégorie déjà présent.
-  if (ref) {
-    const { data: exist } = await supabase
-      .from("inventory").select("id, quantite")
-      .eq("character_id", characterId).eq("ref", ref).eq("categorie", categorie).limit(1);
-    if (exist && exist.length) {
-      const { data } = await supabase
-        .from("inventory").update({ quantite: exist[0].quantite + quantite })
-        .eq("id", exist[0].id).select().single();
-      return data;
-    }
+  // Empilement : par ref si présent, sinon par nom (même catégorie).
+  let q = supabase.from("inventory").select("id, quantite")
+    .eq("character_id", characterId).eq("categorie", categorie).limit(1);
+  q = ref ? q.eq("ref", ref) : q.eq("nom", nom);
+  const { data: exist } = await q;
+  if (exist && exist.length) {
+    const { data } = await supabase
+      .from("inventory").update({ quantite: exist[0].quantite + quantite })
+      .eq("id", exist[0].id).select().single();
+    return data;
   }
   const { data, error } = await supabase
     .from("inventory")
@@ -52,6 +51,20 @@ export async function majQuantite(itemId, quantite) {
     .from("inventory").update({ quantite }).eq("id", itemId).select().single();
   if (error) throw error;
   return data;
+}
+
+// Retire (ou décrémente) un objet par son nom. Utilisé par le MJ ([OBJET:retirer|...]).
+export async function retirerParNom(characterId, nom, quantite = 1) {
+  const { data } = await supabase
+    .from("inventory").select("id, quantite")
+    .eq("character_id", characterId).eq("nom", nom).limit(1);
+  if (!data || !data.length) return;
+  const it = data[0];
+  if (it.quantite - quantite <= 0) {
+    await supabase.from("inventory").delete().eq("id", it.id);
+  } else {
+    await supabase.from("inventory").update({ quantite: it.quantite - quantite }).eq("id", it.id);
+  }
 }
 
 /* ── Équipement ── */
@@ -104,6 +117,19 @@ export function getBourse(fiche) {
 export async function majBourse(characterId, bourse) {
   await patchFiche(characterId, (fiche) => ({ ...fiche, bourse: { ...getBourse(fiche), ...bourse } }));
   return bourse;
+}
+
+// Ajoute/retire des pièces (delta signé). Utilisé par le MJ ([OR:...]).
+export async function crediterBourse(characterId, delta = {}) {
+  await patchFiche(characterId, (fiche) => {
+    const b = getBourse(fiche);
+    return { ...fiche, bourse: { po: b.po + (delta.po || 0), pa: b.pa + (delta.pa || 0), pc: b.pc + (delta.pc || 0) } };
+  });
+}
+
+export async function chargerBourse(characterId) {
+  const { data } = await supabase.from("characters").select("fiche").eq("id", characterId).single();
+  return getBourse(data?.fiche);
 }
 
 /* ── Départ ── */

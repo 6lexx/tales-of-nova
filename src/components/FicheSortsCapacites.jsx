@@ -31,7 +31,10 @@ const S = {
     fontFamily: "'Cinzel', serif", letterSpacing: '.5px',
     color: actif ? C.gold : C.muted,
     background: actif ? C.bg : 'transparent',
-    border: `1px solid ${actif ? C.border : 'transparent'}`, borderBottom: 'none',
+    borderTop: `1px solid ${actif ? C.border : 'transparent'}`,
+    borderLeft: `1px solid ${actif ? C.border : 'transparent'}`,
+    borderRight: `1px solid ${actif ? C.border : 'transparent'}`,
+    borderBottom: 'none',
   }),
   barreOutils: {
     display: 'flex', gap: 8, alignItems: 'center', padding: '10px 12px',

@@ -1,17 +1,21 @@
 import { useState, useEffect, useCallback } from 'react'
 import { X, GripHorizontal, ChevronDown, ChevronRight, Trash2, Plus, Minus } from 'lucide-react'
 import {
-  listerInventaire, equiper, desequiper, majQuantite, retirer, majBourse, getBourse,
+  listerInventaire, equiper, desequiper, majQuantite, retirer, majBourse, getBourse, ajouter,
 } from '../services/inventaireService'
+import { ARMES } from '../data/equipement/armes.js'
+import { ARMURES } from '../data/equipement/armures.js'
+import { OBJETS_COMMUNS } from '../data/equipement/objets_communs.js'
+import { supabase } from '../lib/supabase'
 
 // Fenêtre flottante draggable : Sac + Équipement + bourse.
-// Props : { perso, onBourse, onClose }
-export default function Inventaire({ perso, onBourse, onClose }) {
+// Props : { perso, bourse, onBourse, refreshKey, onClose }
+export default function Inventaire({ perso, bourse: bourseProp, onBourse, refreshKey, onClose }) {
   const characterId = perso?.id
   const [rows, setRows] = useState([])
   const [onglet, setOnglet] = useState('sac')
   const [ouverts, setOuverts] = useState({})            // descriptions dépliées
-  const [bourse, setBourse] = useState(getBourse(perso?.fiche))
+  const [bourse, setBourse] = useState(bourseProp || getBourse(perso?.fiche))
   const [pos, setPos] = useState({ x: 200, y: 90 })
 
   const recharger = useCallback(async () => {
@@ -19,7 +23,9 @@ export default function Inventaire({ perso, onBourse, onClose }) {
     try { setRows(await listerInventaire(characterId)) } catch (e) { console.error('inventaire —', e) }
   }, [characterId])
 
-  useEffect(() => { recharger() }, [recharger])
+  useEffect(() => { recharger() }, [recharger, refreshKey])
+  // Bourse mise à jour par le MJ (loot/or) → resync depuis le parent.
+  useEffect(() => { if (bourseProp) setBourse(bourseProp) }, [bourseProp])
 
   const startDrag = (e) => {
     e.preventDefault()
@@ -186,8 +192,8 @@ const S = {
   pieceInput: { width: 52, background: '#1a1e2b', border: '1px solid #252a3a', borderRadius: 6, color: '#e8e0f0', fontSize: 13, padding: '3px 6px', textAlign: 'right' },
   pieceLbl: { fontSize: 10, color: '#8a8aaa' },
   onglets: { display: 'flex', gap: 4, padding: '8px 12px 0', background: '#0f1118' },
-  onglet: { padding: '7px 16px', borderRadius: '8px 8px 0 0', border: '1px solid transparent', borderBottom: 'none', background: 'transparent', color: '#8a8aaa', fontSize: 12.5, cursor: 'pointer', fontFamily: "'Cinzel', serif" },
-  ongletOn: { color: '#c9a84c', background: '#0a0b0f', border: '1px solid #252a3a', borderBottom: 'none' },
+  onglet: { padding: '7px 16px', borderRadius: '8px 8px 0 0', borderTop: '1px solid transparent', borderLeft: '1px solid transparent', borderRight: '1px solid transparent', borderBottom: 'none', background: 'transparent', color: '#8a8aaa', fontSize: 12.5, cursor: 'pointer', fontFamily: "'Cinzel', serif" },
+  ongletOn: { color: '#c9a84c', background: '#0a0b0f', borderTop: '1px solid #252a3a', borderLeft: '1px solid #252a3a', borderRight: '1px solid #252a3a', borderBottom: 'none' },
   corps: { padding: '12px 14px', overflowY: 'auto' },
   vide: { margin: 0, fontSize: 13, color: '#4a4a6a', fontStyle: 'italic' },
   ligne: { borderBottom: '1px solid #1a1e2b', padding: '6px 0' },
