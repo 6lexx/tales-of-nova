@@ -18,7 +18,7 @@
 //   [OR:po|pa|pc]  (deltas signés, pa/pc optionnels ; ex. [OR:50] ou [OR:-10|5])
 //   (QUETE = grammaire positionnelle, séparateur "|", identification par titre)
 
-const TAG_RE = /\[(CONDITION|REPOS|PALIER|CODEX|RECAP|QUETE|OBJET|OR|PV)(?::([^\]]*))?\]/gi
+const TAG_RE = /\[(CONDITION|REPOS|PALIER|CODEX|RECAP|QUETE|OBJET|OR|PV|SORT|RESSOURCE|COMBAT)(?::([^\]]*))?\]/gi
 
 // "cle:empoisonne | source:\"piège\" | duree:3 rounds" -> {cle, source, duree}
 function parseFields(raw) {
@@ -104,6 +104,28 @@ export function parseMjTags(text) {
         if (seg.some((n) => n !== 0)) actions.push({ kind: 'or', po: seg[0] || 0, pa: seg[1] || 0, pc: seg[2] || 0 })
         break
       }
+      case 'SORT': {
+        const niv = parseInt((body || '').trim(), 10)
+        if (!Number.isNaN(niv) && niv >= 1) actions.push({ kind: 'sort', niveau: niv })
+        break
+      }
+      case 'RESSOURCE': {
+        const seg = (body || '').split('|').map((s) => s.trim())
+        if (seg[0]) actions.push({ kind: 'ressource', cle: seg[0], montant: parseInt(seg[1], 10) || 1 })
+        break
+      }
+      case 'COMBAT': {
+        const seg = (body || '').split('|').map((s) => s.trim().replace(/^"|"$/g, ''))
+        const op = (seg[0] || '').toLowerCase()
+        if (op === 'debut') actions.push({ kind: 'combat', op: 'debut' })
+        else if (op === 'ennemi' && seg[1]) actions.push({ kind: 'combat', op: 'ennemi', nom: seg[1], pv: parseInt(seg[2], 10) || 1, ca: parseInt(seg[3], 10) || 10, init: seg[4] ? parseInt(seg[4], 10) : undefined })
+        else if (op === 'degats' && seg[1]) actions.push({ kind: 'combat', op: 'degats', cible: seg[1], n: parseInt(seg[2], 10) || 0 })
+        else if (op === 'soin' && seg[1]) actions.push({ kind: 'combat', op: 'soin', cible: seg[1], n: parseInt(seg[2], 10) || 0 })
+        else if (op === 'tour') actions.push({ kind: 'combat', op: 'tour' })
+        else if (op === 'retirer' && seg[1]) actions.push({ kind: 'combat', op: 'retirer', nom: seg[1] })
+        else if (op === 'fin') actions.push({ kind: 'combat', op: 'fin' })
+        break
+      }
       case 'PV': {
         const n = parseInt((body || '').trim(), 10)
         if (!Number.isNaN(n) && n !== 0) actions.push({ kind: 'pv', delta: n })
@@ -120,7 +142,7 @@ export function parseMjTags(text) {
 // après réception de la réponse MJ.
 export async function applyMjActions(actions, ctx, services) {
   const { characterId, campaignId, sessionId, invokeClaude } = ctx
-  const { statusService, progressionService, codexService, questService, inventaireService } = services
+  const { statusService, progressionService, codexService, questService, inventaireService, ressourceService, combatService } = services
 
   for (const a of actions) {
     try {
@@ -133,7 +155,19 @@ export async function applyMjActions(actions, ctx, services) {
           await statusService.removeCondition(characterId, a.conditionKey)
         }
       } else if (a.kind === 'rest') {
-        await statusService.applyRest(characterId, a.type)
+        await ressourceService?.repos(characterId, a.type)
+      } else if (a.kind === 'sort') {
+        await ressourceService?.consommerEmplacement(characterId, a.niveau)
+      } else if (a.kind === 'ressource') {
+        await ressourceService?.consommerRessource(characterId, a.cle, a.montant)
+      } else if (a.kind === 'combat') {
+        if (a.op === 'debut') await combatService?.demarrer(sessionId, characterId)
+        else if (a.op === 'ennemi') await combatService?.ajouterEnnemi(sessionId, { nom: a.nom, pv: a.pv, ca: a.ca, init: a.init })
+        else if (a.op === 'degats') await combatService?.degats(sessionId, a.cible, a.n)
+        else if (a.op === 'soin') await combatService?.soin(sessionId, a.cible, a.n)
+        else if (a.op === 'tour') await combatService?.tourSuivant(sessionId)
+        else if (a.op === 'retirer') await combatService?.retirer(sessionId, a.nom)
+        else if (a.op === 'fin') await combatService?.terminer(sessionId)
       } else if (a.kind === 'milestone') {
         await progressionService.proposeMilestone(
           characterId, a.toLevel, a.raison, campaignId

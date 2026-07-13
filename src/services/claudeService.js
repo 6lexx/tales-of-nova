@@ -144,13 +144,16 @@ export function buildBlocTags() {
   return `[TAGS MÉCANIQUES]
 À la fin de ta réponse, quand la fiction le justifie, émets les tags suivants (retirés du texte affiché) pour synchroniser l'état du jeu. N'ANNONCE PAS de changement chiffré (PV, or, objet) sans émettre le tag correspondant.
 - [PV:-3] ou [PV:9] : perte ou gain de points de vie (delta signé). OBLIGATOIRE dès qu'un PV change. Ne donne PAS le total « X/Y » dans le texte — l'interface l'affiche ; décris la blessure ou le soulagement, pas les chiffres.
-- [OBJET:retirer|nom|quantite] : un objet consommé, lancé, donné ou perdu (nom EXACT de l'inventaire).
+- [OBJET:retirer|nom|quantite] : OBLIGATOIRE dès qu'un objet quitte le sac — consommé, lancé, jeté, brisé, donné, vendu ou perdu. Utilise le nom EXACT tel qu'affiché dans [INVENTAIRE].
 - [OBJET:ajouter|nom|quantite|description] : butin gagné.
 - [OR:po|pa|pc] : gain/perte de pièces (deltas signés, ex. [OR:50] ou [OR:-10]).
+- [SORT:niveau] : le personnage lance un sort → consomme un emplacement de ce niveau (ex. [SORT:1]). Pour un occultiste, n'importe quel niveau consomme un emplacement de pacte.
+- [RESSOURCE:cle|n] : dépense une ressource de classe (ex. [RESSOURCE:ki|2], [RESSOURCE:rage|1], [RESSOURCE:second_souffle|1]).
 - [CONDITION:add|cle] / [CONDITION:remove|cle] : état (empoisonné, à terre, etc.).
 - [REPOS:court] / [REPOS:long] : récupération.
 - [QUETE:creer|type|titre|description], [QUETE:indice|titre|texte], [QUETE:accomplir|titre], [QUETE:echouer|titre].
 - [PALIER: niveau:X | raison:"..."] : montée de niveau, aux moments clés cohérents avec l'histoire.
+- [COMBAT:debut] puis [COMBAT:ennemi|nom|pv|ca|init] pour chaque adversaire : démarre un combat suivi (initiative, PV et CA des ennemis affichés). En combat : [COMBAT:degats|nom|n] quand un ennemi subit des dégâts, [COMBAT:soin|nom|n], [COMBAT:tour] pour passer au combattant suivant, [COMBAT:retirer|nom] si un ennemi fuit/meurt, [COMBAT:fin] à la fin. Les dégâts subis PAR le joueur passent par [PV:-n] (pas [COMBAT]). Une attaque se résout via [JET] (DD = CA de la cible).
 - [CODEX:...], [RECAP] : enrichissement et récapitulatif.`
 }
 

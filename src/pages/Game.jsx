@@ -18,6 +18,9 @@ import { supabase } from '../lib/supabase'
 import FicheSortsCapacites from '../components/FicheSortsCapacites'
 import Inventaire from '../components/Inventaire'
 import * as inventaireService from '../services/inventaireService'
+import * as ressourceService from '../services/ressourceService'
+import { etatRessources } from '../services/ressourceService'
+import * as combatService from '../services/combatService'
 const { getBourse } = inventaireService
 import MonteeNiveau from '../components/MonteeNiveau'
 import { getPendingMilestone } from '../services/progressionService'
@@ -89,6 +92,7 @@ export default function Game() {
   const [bourse, setBourse] = useState({ po: 0, pa: 0, pc: 0 })
   const [invRefresh, setInvRefresh] = useState(0)
   const [milestone, setMilestone] = useState(null)
+  const [combat, setCombat] = useState({ actif: false, round: 0, tour: 0, ordre: [] })
 
 
   useEffect(() => {
@@ -98,6 +102,7 @@ export default function Game() {
         setPerso(p)
         setBourse(getBourse(p.fiche))
         setMilestone(await getPendingMilestone(characterId))
+        try { setCombat(await combatService.chargerCombat(s.id)) } catch { /* noop */ }
         const s = await getOrCreateSession(characterId)
         setSession(s)
         sessionRef.current = s
@@ -278,6 +283,18 @@ export default function Game() {
 
   // Applique les tags mécaniques du MJ (dont [QUETE]) sur le texte de réponse,
   // exécute les actions, rafraîchit les quêtes, et renvoie le texte nettoyé à afficher.
+  // Extraction légère des GAINS (objets/pièces) depuis la narration, en secours du tag MJ.
+  async function extraireGains(narration) {
+    const system = `Tu extrais UNIQUEMENT ce que le personnage vient de RECEVOIR, RAMASSER, ACHETER ou GAGNER MAINTENANT dans cette narration. Réponds STRICTEMENT en JSON, sans texte autour :
+{"objets":[{"nom":"...","quantite":1}],"or":{"po":0,"pa":0,"pc":0}}
+Rien d'hypothétique, rien qui appartient à un PNJ, rien que le personnage possédait déjà. Si rien n'est gagné, renvoie des listes/valeurs vides.`
+    const t = await sendMessage([{ role: 'user', content: narration }], system)
+    const j = t.replace(/```json|```/g, '').trim()
+    const a = j.indexOf('{'), b = j.lastIndexOf('}')
+    if (a === -1 || b === -1) return { objets: [], or: {} }
+    return JSON.parse(j.slice(a, b + 1))
+  }
+
   async function traiterTagsMj(texteBrut, s) {
     const { texte, actions } = parseMjTags(texteBrut)
     const quetesCreees = actions.filter((a) => a.kind === 'quest' && a.op === 'creer').map((a) => a.titre)
@@ -286,7 +303,7 @@ export default function Game() {
         await applyMjActions(
           actions,
           { characterId, campaignId: s.campaign_id, sessionId: s.id, invokeClaude: sendMessage },
-          { statusService, progressionService, codexService, questService, inventaireService },
+          { statusService, progressionService, codexService, questService, inventaireService, ressourceService, combatService },
         )
       } catch (e) {
         console.error('applyMjActions —', e)
@@ -299,19 +316,39 @@ export default function Game() {
       if (actions.some((a) => a.kind === 'milestone')) {
         try { setMilestone(await getPendingMilestone(characterId)) } catch { /* noop */ }
       }
-      let pvMaj = actions.some((a) => a.kind === 'pv' || a.kind === 'rest' || a.kind === 'condition')
-      // Filet : le MJ écrit parfois le total "N/max" en prose sans tag → on synchronise.
-      if (!actions.some((a) => a.kind === 'pv') && perso?.pv_max) {
-        const m = texte.match(new RegExp(`(\\d{1,5})\\s*/\\s*${perso.pv_max}\\b`))
-        if (m) {
-          const n = parseInt(m[1], 10)
-          if (n >= 0 && n <= perso.pv_max && n !== perso.pv_actuels) {
-            try { await statusService.setPV(characterId, n); pvMaj = true } catch { /* noop */ }
-          }
+      if (actions.some((a) => a.kind === 'combat')) {
+        try { setCombat(await combatService.chargerCombat(s.id)) } catch { /* noop */ }
+      }
+    }
+
+    // Réconciliation loot : la narration évoque un gain mais le MJ n'a pas tagué → on rattrape.
+    const aTagAjout = actions.some((a) => a.kind === 'objet' && a.op === 'ajouter')
+    const aTagOr = actions.some((a) => a.kind === 'or')
+    const evoqueGain = /\b(trouv|ramass|reçoi|reçu|récupèr|empoch|tend|remet|donne|offre|butin|coffre|récompense|dépouill|pièces?|po\b|or\b)/i.test(texte)
+    if (evoqueGain && (!aTagAjout || !aTagOr)) {
+      try {
+        const g = await extraireGains(texte)
+        let maj = false
+        if (!aTagAjout) for (const o of g.objets || []) { if (o?.nom) { await inventaireService.ajouter(characterId, { categorie: 'commun', nom: o.nom, quantite: o.quantite || 1 }); maj = true } }
+        const or = g.or || {}
+        if (!aTagOr && (or.po || or.pa || or.pc)) { await inventaireService.crediterBourse(characterId, or); maj = true }
+        if (maj) { setInvRefresh((k) => k + 1); try { setBourse(await inventaireService.chargerBourse(characterId)) } catch { /* noop */ } }
+      } catch (e) { console.error('reconciliation loot —', e) }
+    }
+
+    // PV : hors du if(actions.length) pour couvrir aussi la prose pure sans aucun tag.
+    let pvMaj = actions.some((a) => a.kind === 'pv' || a.kind === 'rest' || a.kind === 'condition' || a.kind === 'sort' || a.kind === 'ressource')
+    if (!actions.some((a) => a.kind === 'pv') && perso?.pv_max) {
+      const m = texte.match(new RegExp(`(\\d{1,5})\\s*/\\s*${perso.pv_max}\\b`))
+      if (m) {
+        const n = parseInt(m[1], 10)
+        if (n >= 0 && n <= perso.pv_max && n !== perso.pv_actuels) {
+          try { await statusService.setPV(characterId, n); pvMaj = true } catch { /* noop */ }
         }
       }
-      if (pvMaj) { try { setPerso(await getCharacter(characterId)) } catch { /* noop */ } }
     }
+    if (pvMaj) { try { setPerso(await getCharacter(characterId)) } catch { /* noop */ } }
+
     return { texte, quetesCreees }
   }
 
@@ -418,6 +455,22 @@ export default function Game() {
     setMilestone(null)
   }
 
+  async function depenserSort(niv) {
+    try { setPerso(await ressourceService.consommerEmplacement(characterId, niv)) } catch (e) { console.error('sort —', e) }
+  }
+  async function ajusterRessource(cle, montant) {
+    try { setPerso(await ressourceService.consommerRessource(characterId, cle, montant)) } catch (e) { console.error('ressource —', e) }
+  }
+  async function faireRepos(type) {
+    try { setPerso(await ressourceService.repos(characterId, type)) } catch (e) { console.error('repos —', e) }
+  }
+  async function tourCombat() {
+    try { setCombat(await combatService.tourSuivant(session.id)) } catch (e) { console.error('combat —', e) }
+  }
+  async function finCombat() {
+    try { setCombat(await combatService.terminer(session.id)) } catch (e) { console.error('combat —', e) }
+  }
+
   const onSend = () => (mode === 'admin' ? envoyerAdmin() : envoyer())
 
   const handleKey = (e) => {
@@ -494,6 +547,51 @@ export default function Game() {
             <ScrollText size={13} />
             Grimoire & Capacités
           </button>
+
+          {(() => {
+            const res = etatRessources(perso)
+            const niveaux = Object.keys(res.emplacements).filter((k) => k !== 'pacte')
+            const pacte = res.emplacements.pacte
+            return (
+              <div style={S.resBloc}>
+                <div style={S.resTitre}>Ressources</div>
+                {(niveaux.length > 0 || pacte) && (
+                  <div style={S.resSection}>
+                    {niveaux.map((k) => (
+                      <div key={k} style={S.resLigne}>
+                        <span style={S.resLbl}>Sorts niv.{k}</span>
+                        <span style={S.resVal}>{res.emplacements[k].actuel}/{res.emplacements[k].max}</span>
+                        <button style={S.resBtn} onClick={() => depenserSort(Number(k))} disabled={res.emplacements[k].actuel <= 0}>−</button>
+                      </div>
+                    ))}
+                    {pacte && (
+                      <div style={S.resLigne}>
+                        <span style={S.resLbl}>Pacte (niv.{pacte.niveau})</span>
+                        <span style={S.resVal}>{pacte.actuel}/{pacte.nb}</span>
+                        <button style={S.resBtn} onClick={() => depenserSort(pacte.niveau)} disabled={pacte.actuel <= 0}>−</button>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {res.classe.length > 0 && (
+                  <div style={S.resSection}>
+                    {res.classe.map((r) => (
+                      <div key={r.cle} style={S.resLigne}>
+                        <span style={S.resLbl}>{r.label}</span>
+                        <span style={S.resVal}>{r.actuel}/{r.max}</span>
+                        <button style={S.resBtn} onClick={() => ajusterRessource(r.cle, 1)} disabled={r.actuel <= 0}>−</button>
+                        <button style={S.resBtn} onClick={() => ajusterRessource(r.cle, -1)} disabled={r.actuel >= r.max}>+</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div style={S.reposRow}>
+                  <button style={S.reposBtn} onClick={() => faireRepos('court')}>Repos court</button>
+                  <button style={S.reposBtn} onClick={() => faireRepos('long')}>Repos long</button>
+                </div>
+              </div>
+            )
+          })()}
         </>}
       </aside>
 
@@ -601,6 +699,37 @@ export default function Game() {
 
       {/* ── COLONNE DROITE ── */}
       <aside style={S.sideRight}>
+        {combat.actif && (
+          <div style={S.rightSection}>
+            <div style={S.rightTitle}><Swords size={14} /> Combat — round {combat.round}</div>
+            <div style={S.combatOrdre}>
+              {combat.ordre.map((c, i) => {
+                const actif = i === combat.tour
+                const estPerso = c.type === 'perso'
+                const pv = estPerso ? (perso?.pv_actuels ?? 0) : c.pv
+                const pvMax = estPerso ? (perso?.pv_max ?? 1) : c.pvMax
+                const mort = !estPerso && c.statut === 'mort'
+                return (
+                  <div key={c.id} style={{ ...S.combatLigne, ...(actif ? S.combatActif : {}), ...(mort ? S.combatMort : {}) }}>
+                    <span style={S.combatInit}>{c.init}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={S.combatNom}>{estPerso ? '✦ ' : ''}{c.nom}{c.ca ? <span style={S.combatCa}> CA {c.ca}</span> : null}</div>
+                      <div style={S.combatBarre}>
+                        <div style={{ ...S.combatFill, width: `${Math.max(0, Math.min(100, (pv / pvMax) * 100))}%`, background: estPerso ? '#3a8a8a' : '#b84040' }} />
+                      </div>
+                    </div>
+                    <span style={S.combatPv}>{mort ? '☠' : `${pv}/${pvMax}`}</span>
+                  </div>
+                )
+              })}
+            </div>
+            <div style={S.combatBtns}>
+              <button style={S.reposBtn} onClick={tourCombat}>Tour suivant</button>
+              <button style={S.reposBtn} onClick={finCombat}>Fin</button>
+            </div>
+          </div>
+        )}
+
         <div style={S.rightSection}>
           <div style={S.rightTitle}><ScrollText size={14} /> Quêtes</div>
           <QuestPanel
@@ -930,11 +1059,31 @@ const S = {
   sendBtn: { width: 46, flexShrink: 0, background: 'linear-gradient(135deg, #7b5ea7 0%, #3d2060 100%)', border: 'none', borderRadius: 10, color: '#e8e0f0', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' },
   sideRight: { display: 'flex', flexDirection: 'column', background: '#0f1118', borderLeft: '1px solid #252a3a', overflowY: 'auto' },
   rightSection: { padding: '16px 14px', borderBottom: '1px solid #252a3a' },
+  combatOrdre: { display: 'flex', flexDirection: 'column', gap: 5, marginTop: 8 },
+  combatLigne: { display: 'flex', alignItems: 'center', gap: 8, padding: '5px 7px', borderRadius: 7, background: '#13161f', border: '1px solid #252a3a' },
+  combatActif: { border: '1px solid #c9a84c', background: '#1c1810' },
+  combatMort: { opacity: 0.45 },
+  combatInit: { fontSize: 12, color: '#7b5ea7', fontFamily: "'Cinzel', serif", minWidth: 18, textAlign: 'center' },
+  combatNom: { fontSize: 12.5, color: '#e8e0f0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
+  combatCa: { fontSize: 10, color: '#8a8aaa' },
+  combatBarre: { height: 4, background: '#0a0b0f', borderRadius: 2, marginTop: 3, overflow: 'hidden' },
+  combatFill: { height: '100%' },
+  combatPv: { fontSize: 11, color: '#c4bcd4', minWidth: 40, textAlign: 'right' },
+  combatBtns: { display: 'flex', gap: 6, marginTop: 10 },
   rightTitle: { display: 'flex', alignItems: 'center', gap: 7, fontSize: 11.5, color: '#c9a84c', letterSpacing: 1.5, textTransform: 'uppercase', fontFamily: "'Cinzel', serif", marginBottom: 10 },
   rightEmpty: { margin: 0, fontSize: 12.5, color: '#4a4a6a', fontStyle: 'italic' },
   noteBtn: { display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '9px 12px', background: '#1a1e2b', border: '1px solid #252a3a', borderRadius: 8, color: '#8a8aaa', fontSize: 13, cursor: 'pointer' },
   ficheBtn: { display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '9px 12px', background: '#1a1e2b', border: '1px solid #4a3a6e', borderRadius: 8, color: '#c9a84c', fontSize: 13, cursor: 'pointer', marginTop: 4 },
   grimoireBtn: { display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '9px 12px', background: '#1a1428', border: '1px solid #4a3a6e', borderRadius: 8, color: '#b79ad6', fontSize: 13, cursor: 'pointer', marginTop: 4 },
+  resBloc: { marginTop: 10, padding: '10px 11px', background: '#12141c', border: '1px solid #252a3a', borderRadius: 10 },
+  resTitre: { fontSize: 10, letterSpacing: 1.5, textTransform: 'uppercase', color: '#7b5ea7', fontFamily: "'Cinzel', serif", marginBottom: 8 },
+  resSection: { display: 'flex', flexDirection: 'column', gap: 5, marginBottom: 8, paddingBottom: 8, borderBottom: '1px solid #1a1e2b' },
+  resLigne: { display: 'flex', alignItems: 'center', gap: 6 },
+  resLbl: { flex: 1, fontSize: 12, color: '#c4bcd4' },
+  resVal: { fontSize: 12, color: '#e8e0f0', fontFamily: "'Cinzel', serif", minWidth: 34, textAlign: 'right' },
+  resBtn: { width: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#1a1e2b', border: '1px solid #2c313d', borderRadius: 5, color: '#c4bcd4', fontSize: 13, cursor: 'pointer', lineHeight: 1 },
+  reposRow: { display: 'flex', gap: 6 },
+  reposBtn: { flex: 1, padding: '7px 4px', background: '#1a1428', border: '1px solid #4a3a6e', borderRadius: 7, color: '#b79ad6', fontSize: 11.5, cursor: 'pointer' },
   bourseRow: { display: 'flex', gap: 8, marginBottom: 10 },
   bourseCell: { flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, padding: '7px 2px', background: '#13161f', border: '1px solid #252a3a', borderRadius: 8 },
   bourseDot: { width: 9, height: 9, borderRadius: '50%' },
