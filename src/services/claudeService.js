@@ -2,7 +2,6 @@
 // L'appel réseau passe par l'edge function "mj" (clé Anthropic protégée côté serveur).
 
 import { supabase } from '../lib/supabase'
-import { parseMjTags } from './mjTagParser'
 import { etatMecanique, modCarac, signe } from "./guerrierService.js";
 
 /* ════════════════════════════════════════════════════════════
@@ -140,6 +139,50 @@ export function buildBlocInventaire(inventaire = [], bourse = {}) {
   return `[INVENTAIRE]\nBourse : ${pieces}\n${lignes.join('\n')}\n\nLe personnage possède réellement ces objets : autorise leur usage. S'il tente d'utiliser un objet absent de cette liste, signale-le au lieu de l'autoriser. Quand un objet est consommé, lancé, donné ou perdu, émets [OBJET:retirer|nom|quantite]. Pour un gain de butin, émets [OBJET:ajouter|nom|quantite|description] et pour des pièces [OR:po|pa|pc].`
 }
 
+// --- Bloc combat : etat courant + consigne de declenchement ---
+// Lit game_sessions.etat.combat (charge par Game.jsx). Le MJ y voit les noms EXACTS
+// des ennemis : trouverCible() matche par nom, un ecart et le tag part dans le vide.
+// Les PV des ennemis lui sont donnes (il les a fixes lui-meme) ; c'est l'interface,
+// pas le prompt, qui les masque au joueur.
+export function buildBlocCombat(combat = {}) {
+  const DECLENCHEMENT = `Dès qu'un affrontement s'engage — un PNJ attaque, une créature charge, une embuscade se referme,
+le joueur dégaine le premier —, tu émets [COMBAT:debut] puis un [COMBAT:ennemi|nom|pv|ca] par adversaire,
+dans le MÊME message que la narration de l'attaque. Pas d'exception : aucune échauffourée narrée à la main.
+Donne à chaque ennemi un nom court et STABLE (« Gobelin éclaireur »), que tu réutiliseras à l'identique
+dans tous les tags suivants. Deux créatures identiques reçoivent deux noms distincts (« Gobelin A », « Gobelin B »).
+N'annonce pas l'initiative du joueur et ne la lance pas : il la lance lui-même dans l'interface.`
+
+  if (!combat?.actif || !combat?.ordre?.length) {
+    return `[COMBAT]
+Aucun combat en cours.
+
+${DECLENCHEMENT}`
+  }
+
+  const ordre = combat.ordre
+  const courant = ordre[combat.tour] ?? ordre[0]
+  const lignes = ordre.map((c, i) => {
+    const fleche = i === combat.tour ? '→' : ' '
+    const init = c.init === null ? '(jet en cours)' : c.init
+    if (c.type === 'perso') return `${fleche} ${init} — ${c.nom} (JOUEUR, CA ${c.ca})`
+    const etat = c.statut === 'mort' ? 'hors de combat' : `${c.pv}/${c.pvMax} PV`
+    return `${fleche} ${init} — ${c.nom} (CA ${c.ca}) — ${etat}`
+  }).join('\n')
+  const noms = ordre.filter((c) => c.type === 'ennemi').map((c) => `« ${c.nom} »`).join(', ')
+
+  return `[COMBAT — EN COURS]
+Round ${combat.round}. C'est au tour de : ${courant?.nom ?? '—'}.
+Ordre d'initiative (→ = combattant courant) :
+${lignes}
+
+N'émets PAS [COMBAT:debut] : le combat est déjà lancé, tu écraserais l'initiative.
+Noms EXACTS à réutiliser dans les tags : ${noms || '—'}.
+- [COMBAT:degats|nom|FORMULE] dès qu'un ennemi encaisse (ex. [COMBAT:degats|${ordre.find((c) => c.type === 'ennemi')?.nom ?? 'Gobelin'}|1d8+3]).
+- [COMBAT:tour] chaque fois que le combattant courant a fini d'agir — c'est toi qui fais avancer l'ordre.
+- [COMBAT:retirer|nom] dès qu'un ennemi meurt ou fuit ; [COMBAT:fin] quand il n'en reste aucun.
+Les PV ci-dessus sont pour TOI : ne les cite jamais. Décris l'état (il chancelle, il saigne, il tient encore).`
+}
+
 export function buildBlocTags() {
   return `[TAGS MÉCANIQUES]
 À la fin de ta réponse, quand la fiction le justifie, émets les tags suivants (retirés du texte affiché) pour synchroniser l'état du jeu. N'ANNONCE PAS de changement chiffré (PV, or, objet) sans émettre le tag correspondant.
@@ -153,7 +196,7 @@ export function buildBlocTags() {
 - [REPOS:court] / [REPOS:long] : récupération.
 - [QUETE:creer|type|titre|description], [QUETE:indice|titre|texte], [QUETE:accomplir|titre], [QUETE:echouer|titre].
 - [PALIER: niveau:X | raison:"..."] : montée de niveau, aux moments clés cohérents avec l'histoire.
-- [COMBAT:debut] puis [COMBAT:ennemi|nom|pv|ca|init] pour chaque adversaire : démarre un combat suivi (initiative, PV et CA des ennemis affichés). En combat : [COMBAT:degats|nom|n] quand un ennemi subit des dégâts, [COMBAT:soin|nom|n], [COMBAT:tour] pour passer au combattant suivant, [COMBAT:retirer|nom] si un ennemi fuit/meurt, [COMBAT:fin] à la fin. Les dégâts subis PAR le joueur passent par [PV:-n] (pas [COMBAT]). Une attaque se résout via [JET] (DD = CA de la cible).
+- [COMBAT:debut] puis [COMBAT:ennemi|nom|pv|ca|init] pour chaque adversaire : démarre un combat suivi. L'initiative du joueur est lancée par LUI dans l'interface — ne la lance pas, ne l'invente pas, ne la commente pas. En combat : [COMBAT:degats|nom|FORMULE] quand un ennemi subit des dégâts — donne la FORMULE (ex. [COMBAT:degats|Gobelin|1d6+3]), c'est le système qui lance les dés et applique le résultat. Sur un critique, écris la formule déjà doublée (2d6+3). N'annonce JAMAIS un chiffre de dégâts toi-même et ne décris pas les PV restants de l'ennemi : décris son état (il chancelle, il saigne, il tient encore). Aussi : [COMBAT:soin|nom|n], [COMBAT:tour] pour passer au combattant suivant, [COMBAT:retirer|nom] si un ennemi fuit/meurt, [COMBAT:fin] à la fin. Les dégâts subis PAR le joueur passent par [PV:-n] (pas [COMBAT]). Une attaque se résout via [JET] (DD = CA de la cible).
 - [CODEX:...], [RECAP] : enrichissement et récapitulatif.`
 }
 
@@ -182,7 +225,7 @@ LECTURE SEULE — tu n'émets AUCUNE balise, ni mécanique ni de style : pas de 
    ════════════════════════════════════════════════════════════ */
 
 // --- System prompt de narration (4 blocs) ---
-export function buildSystemPrompt(personnage = {}, session = {}, quetesActives = [], inventaire = [], bourse = {}) {
+export function buildSystemPrompt(personnage = {}, session = {}, quetesActives = [], inventaire = [], bourse = {}, combat = {}) {
   return [
     buildBlocRole(),
     buildBlocJets(),
@@ -190,6 +233,7 @@ export function buildSystemPrompt(personnage = {}, session = {}, quetesActives =
     buildBlocSession(session),
     buildBlocQuetes(quetesActives),
     buildBlocInventaire(inventaire, bourse),
+    buildBlocCombat(combat),
     buildBlocTags(),
   ].join('\n\n')
 }
@@ -208,9 +252,14 @@ export function buildAdminPrompt(personnage = {}, session = {}) {
    ════════════════════════════════════════════════════════════ */
 
 // --- Méthode centrale : envoie à la fonction relais, renvoie le texte de Claude ---
-export async function sendMessage(messages, systemPrompt) {
+// Les tags mecaniques ([COMBAT], [QUETE], [OBJET], [PV]...) sont emis EN FIN de reponse :
+// une generation coupee par max_tokens les perd tous. L'edge function plafonne a 1024 par
+// defaut — trop court pour 3-5 paragraphes en francais. On impose donc la valeur ici.
+const MAX_TOKENS = 2048
+
+export async function sendMessage(messages, systemPrompt, options = {}) {
   const { data, error } = await supabase.functions.invoke('mj', {
-    body: { messages, system: systemPrompt },
+    body: { messages, system: systemPrompt, max_tokens: options.max_tokens ?? MAX_TOKENS },
   })
   if (error) {
     let detail = error.message
@@ -218,6 +267,10 @@ export async function sendMessage(messages, systemPrompt) {
     throw new Error(detail)
   }
   if (data?.error) throw new Error(JSON.stringify(data.error))
+  // Filet de securite : si ca tronque encore, on le voit au lieu de le subir en silence.
+  if (data?.raw?.stop_reason === 'max_tokens') {
+    console.warn('[mj] Reponse TRONQUEE (stop_reason: max_tokens) — les tags de fin de reponse sont perdus.', data.raw.usage)
+  }
   return data.texte
 }
 
@@ -234,8 +287,13 @@ export async function sendAdminMessage(messages, systemPrompt) {
 // Extrait le tag [JET: ...] et le masque du texte affiché
 const JET_RE = /\[JET:\s*([^\]]+)\]/i
 
+// N'extrait QUE le [JET]. Les tags mécaniques ([COMBAT], [QUETE], [OBJET], [PV]...)
+// sont volontairement LAISSÉS dans le texte : c'est Game.traiterTagsMj() qui les parse,
+// les exécute, puis les retire de l'affichage.
+// /!\ Ne jamais rappeler parseMjTags() ici : le texte renvoyé arriverait à traiterTagsMj
+// déjà vidé de ses tags, et plus aucune action ne s'exécuterait (les tags seraient
+// silencieusement perdus entre les deux passes).
 export function parseResponse(rawText = '') {
-  // 1. Extraction du JET (logique existante, inchangée)
   const match = rawText.match(JET_RE)
   let texte = rawText
   let jet = null
@@ -249,12 +307,8 @@ export function parseResponse(rawText = '') {
     texte = rawText.replace(JET_RE, '')
   }
 
-  // 2. Extraction des tags mécaniques sur le texte déjà débarrassé du JET
-  const { texte: texteNettoye, actions } = parseMjTags(texte)
-
   return {
-    texte: texteNettoye.replace(/\n{3,}/g, '\n\n').trim(),
+    texte: texte.replace(/\n{3,}/g, '\n\n').trim(),
     jet,
-    actions, // [] si aucun
   }
 }

@@ -42,6 +42,8 @@ const C = {
 const SUB_RACES = {
   elfe: ["Haut-elfe", "Elfe des bois", "Elfe noir (Drow)"],
   nain: ["Nain des collines", "Nain des montagnes"],
+  halfelin: ["Pied-léger", "Robuste"],
+  gnome: ["Gnome des forêts", "Gnome des roches"],
 };
 
 const ESPECES = [
@@ -57,6 +59,12 @@ const ESPECES = [
     bonusStats: { CHA: 2, INT: 1 }, bonusLibres: 0 },
   { id: "demi-elfe", nom: "Demi-elfe", desc: "Entre deux mondes, charismatiques.", bonus: "+2 CHA · +1 au choix ×2", trait: "Ascendance féerique",
     bonusStats: { CHA: 2 }, bonusLibres: 2 },
+  { id: "halfelin", nom: "Halfelin", desc: "Petits, chanceux, pleins d'allant.", bonus: "+2 DEX", trait: "Chanceux · Brave",
+    bonusStats: { DEX: 2 }, bonusLibres: 0 },
+  { id: "drakeide", nom: "Drakéide", desc: "Sang de dragon, souffle élémentaire.", bonus: "+2 FOR · +1 CHA", trait: "Arme de souffle · Résistance",
+    bonusStats: { FOR: 2, CHA: 1 }, bonusLibres: 0 },
+  { id: "gnome", nom: "Gnome", desc: "Petits inventeurs rusés et curieux.", bonus: "+2 INT", trait: "Vision dans le noir · Ruse gnome",
+    bonusStats: { INT: 2 }, bonusLibres: 0 },
 ];
 
 const CLASSES = [
@@ -64,6 +72,14 @@ const CLASSES = [
   { id: "mage", nom: "Magicien", icon: ScrollText, de: 6, prim: "INT", desc: "Érudit des arcanes, façonneur de sorts.", sauv: ["INT", "SAG"] },
   { id: "voleur", nom: "Roublard", icon: Eye, de: 8, prim: "DEX", desc: "Discret, agile, mortel dans l'ombre.", sauv: ["DEX", "INT"] },
   { id: "clerc", nom: "Clerc", icon: ShieldCheck, de: 8, prim: "SAG", desc: "Canalise la faveur d'une divinité.", sauv: ["SAG", "CHA"] },
+  { id: "barbare", nom: "Barbare", icon: Zap, de: 12, prim: "FOR", desc: "Fureur destructrice, résistance brute.", sauv: ["FOR", "CON"] },
+  { id: "barde", nom: "Barde", icon: Sparkles, de: 8, prim: "CHA", desc: "Magie et inspiration par l'art.", sauv: ["DEX", "CHA"] },
+  { id: "druide", nom: "Druide", icon: Star, de: 8, prim: "SAG", desc: "Magie de la nature, formes sauvages.", sauv: ["INT", "SAG"] },
+  { id: "ensorceleur", nom: "Ensorceleur", icon: Wand2, de: 6, prim: "CHA", desc: "Magie innée, métamagie.", sauv: ["CON", "CHA"] },
+  { id: "moine", nom: "Moine", icon: Footprints, de: 8, prim: "DEX", desc: "Arts martiaux, maîtrise du ki.", sauv: ["FOR", "DEX"] },
+  { id: "occultiste", nom: "Occultiste", icon: BookOpen, de: 8, prim: "CHA", desc: "Pacte avec une entité d'outre-monde.", sauv: ["SAG", "CHA"] },
+  { id: "paladin", nom: "Paladin", icon: Shield, de: 10, prim: "FOR", desc: "Serment sacré, châtiment divin.", sauv: ["SAG", "CHA"] },
+  { id: "rodeur", nom: "Rôdeur", icon: Eye, de: 10, prim: "DEX", desc: "Traqueur, magie de la nature.", sauv: ["FOR", "DEX"] },
 ];
 
 const HISTORIQUES = ["Acolyte", "Artisan", "Criminel", "Ermite", "Noble", "Sage", "Soldat", "Vagabond"];
@@ -263,11 +279,13 @@ export default function CharacterCreator() {
   const valeurFinale = (sid) => (stats[sid] == null ? null : stats[sid] + bonusDe(sid));
 
   /* Caps de sélection au niveau 1 (spécifiques classe/race) */
-  const capSkills = ({ guerrier: 2, mage: 2, voleur: 4, clerc: 2 })[id.classe] ?? 2;
-  const capMineurs = ({ mage: 3, clerc: 3 })[id.classe] ?? 0;
+  const capSkills = ({ barbare: 2, barde: 3, clerc: 2, druide: 2, ensorceleur: 2, guerrier: 2, mage: 2, moine: 2, occultiste: 2, paladin: 2, rodeur: 3, voleur: 4 })[id.classe] ?? 2;
+  const capMineurs = ({ barde: 2, clerc: 3, druide: 2, ensorceleur: 4, mage: 3, occultiste: 2 })[id.classe] ?? 0;
   const capNiveau1 =
     id.classe === "mage" ? 6
-    : id.classe === "clerc" ? Math.max(1, mod(valeurFinale("SAG") ?? 10) + 1)
+    : id.classe === "barde" ? 4
+    : (id.classe === "ensorceleur" || id.classe === "occultiste") ? 2
+    : (id.classe === "clerc" || id.classe === "druide") ? Math.max(1, mod(valeurFinale("SAG") ?? 10) + 1)
     : 0;
   const nbMineurs = sortsConnus.filter((sl) => sortsDispo.find((s) => s.slug === sl)?.niveau === 0).length;
   const nbNiveau1 = sortsConnus.filter((sl) => sortsDispo.find((s) => s.slug === sl)?.niveau === 1).length;

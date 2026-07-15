@@ -1,6 +1,10 @@
 // État de combat, stocké dans game_sessions.etat.combat.
 // Le joueur figure dans l'ordre d'initiative ; ses PV restent characters.pv_actuels
 // (dégâts joueur via [PV]). Les ennemis ont leurs PV suivis ici.
+//
+// Initiative : le joueur entre dans l'ordre avec init:null. Le front détecte ce null,
+// lui fait lancer son d20, puis appelle fixerInitiativeJoueur(). Les ennemis, eux,
+// sont lancés ici (init ?? d20()).
 
 import { supabase } from '../lib/supabase';
 
@@ -20,12 +24,20 @@ async function sauver(sessionId, etat, combat) {
   return combat;
 }
 const caPerso = (p) => p?.fiche?.mecanique?.ca ?? (10 + mod(p?.dexterite));
-const trier = (ordre) => [...ordre].sort((a, b) => (b.init - a.init) || (a.type === 'perso' ? -1 : 1));
-const trouve = (ordre, cible) => {
+
+// Une init null (joueur n'ayant pas encore lancé) est repoussée en fin d'ordre
+// le temps du jet ; le tri est rejoué par fixerInitiativeJoueur().
+const val = (x) => (typeof x.init === 'number' ? x.init : -Infinity);
+const trier = (ordre) => [...ordre].sort((a, b) => (val(b) - val(a)) || (a.type === 'perso' ? -1 : 1));
+
+// Résolution du nom de cible écrit par le MJ vers l'entrée de l'ordre.
+// Exportée : le front l'utilise pour rattacher une animation d'impact au bon ennemi.
+export const trouverCible = (ordre, cible) => {
   const c = (cible || '').trim().toLowerCase();
-  return ordre.find((x) => x.type === 'ennemi' && x.nom.toLowerCase() === c)
-    || ordre.find((x) => x.type === 'ennemi' && x.nom.toLowerCase().includes(c));
+  return (ordre || []).find((x) => x.type === 'ennemi' && x.nom.toLowerCase() === c)
+    || (ordre || []).find((x) => x.type === 'ennemi' && x.nom.toLowerCase().includes(c));
 };
+const trouve = trouverCible;
 
 export async function chargerCombat(sessionId) {
   const { combat } = await lire(sessionId);
@@ -35,8 +47,21 @@ export async function chargerCombat(sessionId) {
 export async function demarrer(sessionId, characterId) {
   const { data: p } = await supabase.from('characters').select('*').eq('id', characterId).single();
   const { etat } = await lire(sessionId);
-  const joueur = { id: 'perso', type: 'perso', nom: p?.nom ?? 'Vous', init: d20() + mod(p?.dexterite), ca: caPerso(p) };
+  const joueur = {
+    id: 'perso', type: 'perso', nom: p?.nom ?? 'Vous',
+    init: null,                       // ← lancé par le joueur, pas ici
+    initMod: mod(p?.dexterite),       // modificateur affiché dans la modale de jet
+    ca: caPerso(p),
+  };
   return sauver(sessionId, etat, { actif: true, round: 1, tour: 0, ordre: [joueur] });
+}
+
+// Appelée par le front une fois le d20 d'initiative lancé par le joueur.
+export async function fixerInitiativeJoueur(sessionId, init) {
+  const { etat, combat } = await lire(sessionId);
+  if (!combat.actif) return combat;
+  const ordre = trier(combat.ordre.map((x) => (x.type === 'perso' ? { ...x, init } : x)));
+  return sauver(sessionId, etat, { ...combat, ordre, tour: 0 });
 }
 
 export async function ajouterEnnemi(sessionId, { nom, pv, ca, init }) {

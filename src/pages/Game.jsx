@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Heart, Shield, Zap, Star, Swords, ScrollText, Dice6, Send, ChevronLeft, BookOpen, X, GripHorizontal, User, Eye } from 'lucide-react'
+import { Heart, Shield, Zap, Star, Swords, ScrollText, Dice6, Send, ChevronLeft, BookOpen, X, GripHorizontal, User, Eye, Skull } from 'lucide-react'
 import { getCharacter } from '../services/characterService'
 import { getOrCreateSession, loadMessages, saveMessage, updateSession } from '../services/sessionService'
 import { buildSystemPrompt, sendMessage, parseResponse, buildAdminPrompt, sendAdminMessage } from '../services/claudeService'
-import { lancerD20, formatPourIA } from '../services/diceService'
+import { lancerD20, formatPourIA, lancerDes } from '../services/diceService'
 import Narration from '../components/Narration'
 import { useAuth } from '../context/AuthContext'
 import QuestPanel from '../components/QuestPanel'
@@ -23,6 +23,7 @@ import { etatRessources } from '../services/ressourceService'
 import * as combatService from '../services/combatService'
 const { getBourse } = inventaireService
 import MonteeNiveau from '../components/MonteeNiveau'
+import AlerteCombat from '../components/AlerteCombat'
 import { getPendingMilestone } from '../services/progressionService'
 
 const C = {
@@ -93,6 +94,10 @@ export default function Game() {
   const [invRefresh, setInvRefresh] = useState(0)
   const [milestone, setMilestone] = useState(null)
   const [combat, setCombat] = useState({ actif: false, round: 0, tour: 0, ordre: [] })
+  const [alerteCombat, setAlerteCombat] = useState(false)   // transition combat.actif false -> true
+  const [impacts, setImpacts] = useState({})                // { [idEnnemi]: {total, formule, des, key} }
+  const initDemandeeRef = useRef(false)                      // evite de rouvrir le de d'initiative
+  const combatRef = useRef({ actif: false, round: 0, tour: 0, ordre: [] })  // lu par les closures (cf. sessionRef)
 
 
   useEffect(() => {
@@ -102,9 +107,9 @@ export default function Game() {
         setPerso(p)
         setBourse(getBourse(p.fiche))
         setMilestone(await getPendingMilestone(characterId))
-        try { setCombat(await combatService.chargerCombat(s.id)) } catch { /* noop */ }
         const s = await getOrCreateSession(characterId)
         setSession(s)
+        try { setCombat(await combatService.chargerCombat(s.id)) } catch { /* noop */ }
         sessionRef.current = s
         setNoteTexte(s.notes || '')
         const msgs = await loadMessages(s.id)
@@ -128,6 +133,10 @@ export default function Game() {
   }, [messages, adminMessages, mode, loading])
 
   useEffect(() => () => clearInterval(animRef.current), [])
+
+  // Le system prompt est construit dans des closures (envoyer, finaliserJet) qui
+  // captureraient un combat perime : on passe par un ref, comme pour la session.
+  useEffect(() => { combatRef.current = combat }, [combat])
 
   // DEBUG — à retirer avant prod. Helpers console, lisent la session au moment de l'appel.
   useEffect(() => {
@@ -161,6 +170,17 @@ export default function Game() {
       console.log('Toutes les quêtes supprimées.')
     })
     window.forcerLoot = guard((tags = '[OR:50][OBJET:Potion de soins|2|Rend 2d4+2 PV]') => traiterTagsMj(tags, s()))
+    window.forcerCombat = guard((tags) => traiterTagsMj(tags, s()))
+    // Affiche le system prompt REELLEMENT envoye a l'edge function 'mj'.
+    window.voirPrompt = guard(async () => {
+      const p = await getCharacter(characterId)
+      const inv = await inventaireService.listerInventaire(characterId).catch(() => [])
+      const b = await inventaireService.chargerBourse(characterId).catch(() => ({}))
+      const sys = buildSystemPrompt(p, s(), [], inv, b, combatRef.current)
+      console.log(sys)
+      console.log('%c[COMBAT] present dans le prompt : ' + sys.includes('[COMBAT'), 'color:#c9a84c;font-weight:bold')
+      return sys
+    })
     window.forcerPalier = guard(async (niv) => {
       await progressionService.proposeMilestone(characterId, niv || 2, 'Palier de test')
       setMilestone(await getPendingMilestone(characterId))
@@ -229,7 +249,7 @@ export default function Game() {
 
   async function lancerPremierMessage(p, s) {
     const inv = await inventaireService.listerInventaire(characterId).catch(() => [])
-    const system = buildSystemPrompt(p, s, quetesActives, inv, getBourse(p.fiche))
+    const system = buildSystemPrompt(p, s, quetesActives, inv, getBourse(p.fiche), combatRef.current)
     const intro = [{ role: 'user', content: "L'aventure commence." }]
     const texte = await sendMessage(intro, system)
     const { texte: affichage0, jet } = parseResponse(texte)
@@ -253,7 +273,7 @@ export default function Game() {
     setLoading(true)
     try {
       const inv = await inventaireService.listerInventaire(characterId).catch(() => [])
-      const system = buildSystemPrompt(perso, session, quetesActives, inv, bourse)
+      const system = buildSystemPrompt(perso, session, quetesActives, inv, bourse, combatRef.current)
       const historique = nouveauxMessages.filter((m) => m.role === 'user' || m.role === 'assistant').map((m) => ({ role: m.role, content: m.content }))
       const texte = await sendMessage(historique, system)
       const { texte: affichage0, jet } = parseResponse(texte)
@@ -298,6 +318,17 @@ Rien d'hypothétique, rien qui appartient à un PNJ, rien que le personnage poss
   async function traiterTagsMj(texteBrut, s) {
     const { texte, actions } = parseMjTags(texteBrut)
     const quetesCreees = actions.filter((a) => a.kind === 'quest' && a.op === 'creer').map((a) => a.titre)
+
+    // Degats en formule ([COMBAT:degats|Gobelin|1d6+3]) : on lance ici, on injecte le total
+    // dans l'action (applyMjActions et combatService.degats restent inchanges), et on garde
+    // le detail des des pour l'animation d'impact.
+    const impactsTour = []
+    for (const a of actions) {
+      if (a.kind === 'combat' && a.op === 'degats' && a.formule) {
+        const r = lancerDes(a.formule)
+        if (r) { a.n = r.total; impactsTour.push({ cible: a.cible, ...r }) }
+      }
+    }
     if (actions.length) {
       try {
         await applyMjActions(
@@ -317,7 +348,12 @@ Rien d'hypothétique, rien qui appartient à un PNJ, rien que le personnage poss
         try { setMilestone(await getPendingMilestone(characterId)) } catch { /* noop */ }
       }
       if (actions.some((a) => a.kind === 'combat')) {
-        try { setCombat(await combatService.chargerCombat(s.id)) } catch { /* noop */ }
+        try {
+          const c = await combatService.chargerCombat(s.id)
+          setCombat(c)
+          if (actions.some((a) => a.kind === 'combat' && a.op === 'debut')) setAlerteCombat(true)
+          if (impactsTour.length) montrerImpacts(c.ordre, impactsTour)
+        } catch { /* noop */ }
       }
     }
 
@@ -377,6 +413,35 @@ Rien d'hypothétique, rien qui appartient à un PNJ, rien que le personnage poss
     }
   }
 
+  // Impacts de degats : on mappe le nom de cible du MJ sur l'ordre via la resolution
+  // deja utilisee par combatService (trouverCible), puis on efface apres l'animation.
+  function montrerImpacts(ordre, liste) {
+    const ajouts = {}
+    for (const imp of liste) {
+      const e = combatService.trouverCible(ordre, imp.cible)
+      if (e) ajouts[e.id] = { ...imp, key: Date.now() + Math.random() }
+    }
+    if (!Object.keys(ajouts).length) return
+    setImpacts((p) => ({ ...p, ...ajouts }))
+    setTimeout(() => setImpacts((p) => {
+      const n = { ...p }
+      for (const id of Object.keys(ajouts)) if (n[id]?.key === ajouts[id].key) delete n[id]
+      return n
+    }), 2400)
+  }
+
+  // Le joueur entre dans l'ordre avec init:null (combatService.demarrer) -> on lui
+  // ouvre le de d'initiative. Lancer purement local : aucun tour de narration consomme.
+  useEffect(() => {
+    if (!combat.actif) { initDemandeeRef.current = false; return }
+    if (modal || initDemandeeRef.current) return
+    const j = combat.ordre.find((c) => c.type === 'perso')
+    if (j && j.init === null) {
+      initDemandeeRef.current = true
+      ouvrirJet({ label: 'Initiative', dd: null, kind: 'initiative', modificateur: j.initMod ?? 0 })
+    }
+  }, [combat, modal])
+
   // Ouvre un jet (réinitialise l'état d'animation)
   function ouvrirJet(jet) {
     setModal(jet)
@@ -397,7 +462,10 @@ Rien d'hypothétique, rien qui appartient à un PNJ, rien que le personnage poss
     }
     const cle = MAP[modal.label.toLowerCase().split(/[\s(]/)[0]] || null
     const valeur = cle ? (perso[cle] || 10) : 10
-    const modificateur = mod(valeur) + bonusMaitrise(perso.niveau)
+    // L'initiative = d20 + mod. de DEX seul (pas de bonus de maitrise) ; le mod. vient de combat.ordre.
+    const modificateur = modal.kind === 'initiative'
+      ? (modal.modificateur ?? 0)
+      : mod(valeur) + bonusMaitrise(perso.niveau)
     const jet = lancerD20(modificateur)
     jetRef.current = { ...jet, modificateur, label: modal.label, dd: modal.dd }
 
@@ -413,9 +481,29 @@ Rien d'hypothétique, rien qui appartient à un PNJ, rien que le personnage poss
         setAffichageDe(jet.brut)
         setPhaseJet('brut')
         setTimeout(() => setPhaseJet('total'), 500)   // le bonus apparaît à côté
-        setTimeout(() => finaliserJet(), 1500)        // puis on envoie au MJ
+        setTimeout(() => (modal.kind === 'initiative' ? finaliserInitiative() : finaliserJet()), 1500)
       }
     }, 70)
+  }
+
+  // Initiative : on inscrit le resultat dans l'ordre de combat. Rien n'est envoye au MJ,
+  // aucun tour de narration n'est consomme.
+  async function finaliserInitiative() {
+    const jet = jetRef.current
+    if (!jet) return
+    // L'init est ecrite AVANT la fermeture de la modale : sinon un rendu intermediaire
+    // voit modal=null + init encore null, et l'effet rouvre le de.
+    try {
+      const c = await combatService.fixerInitiativeJoueur(session.id, jet.total)
+      setCombat(c)
+    } catch (e) {
+      console.error('initiative —', e)
+      initDemandeeRef.current = false   // echec : on autorise une nouvelle tentative
+    }
+    setDernierJet({ brut: jet.brut, total: jet.total, critEchec: jet.critEchec, critReussite: jet.critReussite, label: jet.label, dd: jet.dd })
+    setModal(null)
+    setPhaseJet('pret')
+    setAffichageDe(null)
   }
 
   // Envoie le résultat au MJ et enchaîne la narration
@@ -434,7 +522,7 @@ Rien d'hypothétique, rien qui appartient à un PNJ, rien que le personnage poss
     setLoading(true)
     try {
       const inv = await inventaireService.listerInventaire(characterId).catch(() => [])
-      const system = buildSystemPrompt(perso, session, quetesActives, inv, bourse)
+      const system = buildSystemPrompt(perso, session, quetesActives, inv, bourse, combatRef.current)
       const historique = nouveauxMessages.filter((m) => m.role === 'user' || m.role === 'assistant').map((m) => ({ role: m.role, content: m.content }))
       const texte = await sendMessage(historique, system)
       const { texte: affichage0, jet: prochainJet } = parseResponse(texte)
@@ -486,6 +574,7 @@ Rien d'hypothétique, rien qui appartient à un PNJ, rien que le personnage poss
   return (
     <div style={S.page}>
       <style>{CSS}</style>
+      {alerteCombat && <AlerteCombat onFermer={() => setAlerteCombat(false)} />}
 
       {/* ── COLONNE GAUCHE ── */}
       <aside style={S.sideLeft}>
@@ -706,19 +795,42 @@ Rien d'hypothétique, rien qui appartient à un PNJ, rien que le personnage poss
               {combat.ordre.map((c, i) => {
                 const actif = i === combat.tour
                 const estPerso = c.type === 'perso'
-                const pv = estPerso ? (perso?.pv_actuels ?? 0) : c.pv
-                const pvMax = estPerso ? (perso?.pv_max ?? 1) : c.pvMax
                 const mort = !estPerso && c.statut === 'mort'
+                const imp = impacts[c.id]
+                // Ennemis : les PV exacts restent caches (c'est la narration qui dit leur etat).
+                // On n'expose que le cumul de degats infliges, derive de pvMax - pv.
+                const cumul = estPerso ? 0 : Math.max(0, (c.pvMax ?? 0) - (c.pv ?? 0))
+                const pvPctPerso = estPerso
+                  ? Math.max(0, Math.min(100, ((perso?.pv_actuels ?? 0) / (perso?.pv_max || 1)) * 100))
+                  : 0
                 return (
-                  <div key={c.id} style={{ ...S.combatLigne, ...(actif ? S.combatActif : {}), ...(mort ? S.combatMort : {}) }}>
-                    <span style={S.combatInit}>{c.init}</span>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={S.combatNom}>{estPerso ? '✦ ' : ''}{c.nom}{c.ca ? <span style={S.combatCa}> CA {c.ca}</span> : null}</div>
-                      <div style={S.combatBarre}>
-                        <div style={{ ...S.combatFill, width: `${Math.max(0, Math.min(100, (pv / pvMax) * 100))}%`, background: estPerso ? '#3a8a8a' : '#b84040' }} />
+                  <div key={c.id} style={{ ...S.combatLigne, ...(actif ? S.combatActif : {}), ...(mort ? S.combatMort : {}), ...(imp ? S.combatTouche : {}) }}>
+                    <span style={S.combatInit}>{c.init ?? '—'}</span>
+                    <div style={S.combatIconeWrap}>
+                      <div style={{ ...S.combatIcone, ...(estPerso ? S.combatIconePerso : S.combatIconeEnnemi) }}>
+                        {estPerso ? <User size={13} color="#3a8a8a" />
+                          : mort ? <Skull size={13} color="#8a8aaa" />
+                          : <Swords size={13} color="#b84040" />}
                       </div>
+                      {cumul > 0 && !mort && <span style={S.combatCumul}>−{cumul}</span>}
+                      {imp && (
+                        <span key={imp.key} style={S.combatImpact}>
+                          −{imp.total}
+                          <span style={S.combatImpactDes}>{imp.formule}</span>
+                        </span>
+                      )}
                     </div>
-                    <span style={S.combatPv}>{mort ? '☠' : `${pv}/${pvMax}`}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={S.combatNom}>{c.nom}{c.ca ? <span style={S.combatCa}> CA {c.ca}</span> : null}</div>
+                      {estPerso ? (
+                        <div style={S.combatBarre}>
+                          <div style={{ ...S.combatFill, width: `${pvPctPerso}%`, background: '#3a8a8a' }} />
+                        </div>
+                      ) : (
+                        <div style={S.combatEtat}>{mort ? 'hors de combat' : cumul > 0 ? `${cumul} dégâts subis` : 'indemne'}</div>
+                      )}
+                    </div>
+                    {estPerso && <span style={S.combatPv}>{perso?.pv_actuels ?? 0}/{perso?.pv_max ?? 1}</span>}
                   </div>
                 )
               })}
@@ -1001,6 +1113,23 @@ const CSS = `
   textarea:focus { outline: none; border-color: #4a3a6e !important; }
   ::-webkit-scrollbar { width: 6px; }
   ::-webkit-scrollbar-thumb { background: #252a3a; border-radius: 3px; }
+  @keyframes impactMonte {
+    0%   { opacity: 0; transform: translate(-50%, 4px) scale(.5) }
+    18%  { opacity: 1; transform: translate(-50%, -6px) scale(1.35) }
+    32%  { opacity: 1; transform: translate(-50%, -8px) scale(1) }
+    75%  { opacity: 1; transform: translate(-50%, -18px) scale(1) }
+    100% { opacity: 0; transform: translate(-50%, -30px) scale(.9) }
+  }
+  @keyframes impactSecousse {
+    0%, 100% { transform: translateX(0) }
+    15% { transform: translateX(-4px) } 30% { transform: translateX(4px) }
+    45% { transform: translateX(-3px) } 60% { transform: translateX(3px) }
+    75% { transform: translateX(-1px) }
+  }
+  @keyframes impactFlash {
+    0%   { box-shadow: 0 0 0 0 rgba(184,64,64,.9), inset 0 0 12px rgba(184,64,64,.9) }
+    100% { box-shadow: 0 0 0 10px rgba(184,64,64,0), inset 0 0 0 rgba(184,64,64,0) }
+  }
 `
 
 const S = {
@@ -1067,6 +1196,15 @@ const S = {
   combatNom: { fontSize: 12.5, color: '#e8e0f0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
   combatCa: { fontSize: 10, color: '#8a8aaa' },
   combatBarre: { height: 4, background: '#0a0b0f', borderRadius: 2, marginTop: 3, overflow: 'hidden' },
+  combatTouche: { animation: 'impactSecousse .45s ease' },
+  combatIconeWrap: { position: 'relative', flexShrink: 0 },
+  combatIcone: { width: 26, height: 26, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid' },
+  combatIconePerso: { background: '#101c1c', borderColor: '#3a8a8a' },
+  combatIconeEnnemi: { background: '#1c1010', borderColor: '#5a2828', animation: 'impactFlash .5s ease' },
+  combatCumul: { position: 'absolute', bottom: -4, right: -6, fontSize: 9, fontWeight: 700, color: '#b84040', background: '#0a0b0f', border: '1px solid #5a2828', borderRadius: 6, padding: '0 3px', fontFamily: "'Cinzel', serif" },
+  combatImpact: { position: 'absolute', left: '50%', bottom: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', fontSize: 17, fontWeight: 700, color: '#ff6b5a', fontFamily: "'Cinzel', serif", textShadow: '0 0 10px rgba(184,64,64,.9)', pointerEvents: 'none', whiteSpace: 'nowrap', animation: 'impactMonte 2.4s ease-out forwards' },
+  combatImpactDes: { fontSize: 8.5, color: '#c9a84c', letterSpacing: .5, fontWeight: 500 },
+  combatEtat: { fontSize: 10, color: '#8a8aaa', marginTop: 2, fontStyle: 'italic' },
   combatFill: { height: '100%' },
   combatPv: { fontSize: 11, color: '#c4bcd4', minWidth: 40, textAlign: 'right' },
   combatBtns: { display: 'flex', gap: 6, marginTop: 10 },

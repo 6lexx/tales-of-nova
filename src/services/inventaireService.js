@@ -57,7 +57,7 @@ export async function majQuantite(itemId, quantite) {
 export async function retirerParNom(characterId, nom, quantite = 1) {
   const { data } = await supabase
     .from("inventory").select("id, quantite")
-    .eq("character_id", characterId).eq("nom", nom).limit(1);
+    .eq("character_id", characterId).ilike("nom", (nom || "").trim()).limit(1);
   if (!data || !data.length) return;
   const it = data[0];
   if (it.quantite - quantite <= 0) {

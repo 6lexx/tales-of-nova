@@ -18,6 +18,8 @@
 //   [OR:po|pa|pc]  (deltas signés, pa/pc optionnels ; ex. [OR:50] ou [OR:-10|5])
 //   (QUETE = grammaire positionnelle, séparateur "|", identification par titre)
 
+import { estFormule } from './diceService'
+
 const TAG_RE = /\[(CONDITION|REPOS|PALIER|CODEX|RECAP|QUETE|OBJET|OR|PV|SORT|RESSOURCE|COMBAT)(?::([^\]]*))?\]/gi
 
 // "cle:empoisonne | source:\"piège\" | duree:3 rounds" -> {cle, source, duree}
@@ -119,7 +121,14 @@ export function parseMjTags(text) {
         const op = (seg[0] || '').toLowerCase()
         if (op === 'debut') actions.push({ kind: 'combat', op: 'debut' })
         else if (op === 'ennemi' && seg[1]) actions.push({ kind: 'combat', op: 'ennemi', nom: seg[1], pv: parseInt(seg[2], 10) || 1, ca: parseInt(seg[3], 10) || 10, init: seg[4] ? parseInt(seg[4], 10) : undefined })
-        else if (op === 'degats' && seg[1]) actions.push({ kind: 'combat', op: 'degats', cible: seg[1], n: parseInt(seg[2], 10) || 0 })
+        else if (op === 'degats' && seg[1]) {
+          // Le MJ donne une FORMULE (1d6+3) ou un entier. parseInt("1d6+3") vaut 1 :
+          // on teste donc la formule AVANT. Le lancer est fait par Game.traiterTagsMj.
+          const brut = (seg[2] || '').trim()
+          actions.push({ kind: 'combat', op: 'degats', cible: seg[1],
+            formule: estFormule(brut) ? brut : null,
+            n: estFormule(brut) ? 0 : (parseInt(brut, 10) || 0) })
+        }
         else if (op === 'soin' && seg[1]) actions.push({ kind: 'combat', op: 'soin', cible: seg[1], n: parseInt(seg[2], 10) || 0 })
         else if (op === 'tour') actions.push({ kind: 'combat', op: 'tour' })
         else if (op === 'retirer' && seg[1]) actions.push({ kind: 'combat', op: 'retirer', nom: seg[1] })

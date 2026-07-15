@@ -4,7 +4,7 @@ import { supabase } from '../lib/supabase'
 import { applyMilestone } from '../services/progressionService'
 
 const mod = (v) => Math.floor((v - 10) / 2)
-const DE_CLASSE = { Guerrier: 10, Magicien: 6, Roublard: 8, Clerc: 8 }
+const DE_CLASSE = { Guerrier: 10, Magicien: 6, Roublard: 8, Clerc: 8, Barbare: 12, Barde: 8, Druide: 8, Ensorceleur: 6, Moine: 8, Occultiste: 8, Paladin: 10, 'Rôdeur': 10 }
 const NORM_CLASSE = { Mage: 'Magicien', Voleur: 'Roublard' }
 const classeSrd = (c) => (c ? NORM_CLASSE[c] || c : null)
 const COL = { FOR: 'force', DEX: 'dexterite', CON: 'constitution', INT: 'intelligence', SAG: 'sagesse', CHA: 'charisme' }
