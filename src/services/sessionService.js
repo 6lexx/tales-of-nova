@@ -1,39 +1,59 @@
 import { supabase } from '../lib/supabase'
 
-// Indique si une campagne existe déjà pour ce personnage (lecture seule, ne crée rien).
+// Indique si une campagne EN COURS existe déjà pour ce personnage (lecture seule, ne crée rien).
+// Une campagne terminée (mort ou réussite) ne bloque plus le personnage : il peut repartir
+// pour une nouvelle aventure. C'est ce filtre qui rend le perso réutilisable.
 export async function campagneExistePour(characterId) {
   const { data, error } = await supabase
     .from('campaigns')
     .select('id')
     .eq('character_id', characterId)
+    .eq('statut', 'en_cours')
     .limit(1)
   if (error) throw error
   return (data?.length ?? 0) > 0
 }
 
-// Récupère ou crée une session pour un personnage donné
+// Campagne (métadonnées) par son id — sert au verrou de lecture seule et aux archives.
+export async function getCampagne(campaignId) {
+  const { data, error } = await supabase
+    .from('campaigns')
+    .select('id, titre, statut, fin_raison, terminee_le, created_at, character_id')
+    .eq('id', campaignId)
+    .single()
+  if (error) throw error
+  return data
+}
+
+// Erreur typée : aucune campagne en cours pour ce personnage. Le front doit
+// rediriger vers le paramétrage (/campagne/nouvelle/:id), pas créer une coquille.
+export class PasDeCampagneError extends Error {
+  constructor(characterId) {
+    super("Aucune campagne en cours pour ce personnage.")
+    this.name = 'PasDeCampagneError'
+    this.characterId = characterId
+  }
+}
+
+// Récupère la session de la campagne EN COURS d'un personnage.
+// /!\ Ne crée plus de campagne au vol : l'ancienne version en fabriquait une
+// titrée « Nouvelle aventure » SANS arc. Après une fin de campagne, tout retour
+// sur /jeu/:id aurait produit une coquille vide. On lève PasDeCampagneError et
+// c'est au front de renvoyer vers /campagne/nouvelle/:id.
 export async function getOrCreateSession(characterId) {
   const { data: { user } } = await supabase.auth.getUser()
 
-  // Cherche d'abord une campagne existante pour ce perso
-  let { data: campaign } = await supabase
+  // Campagne EN COURS uniquement : une campagne terminée ne se rouvre pas ici.
+  const { data: campaign } = await supabase
     .from('campaigns')
     .select('id')
     .eq('character_id', characterId)
+    .eq('statut', 'en_cours')
     .order('created_at', { ascending: false })
     .limit(1)
-    .single()
+    .maybeSingle()
 
-  // Crée la campagne si elle n'existe pas
-  if (!campaign) {
-    const { data: newCampaign, error } = await supabase
-      .from('campaigns')
-      .insert({ user_id: user.id, character_id: characterId, titre: 'Nouvelle aventure' })
-      .select()
-      .single()
-    if (error) throw error
-    campaign = newCampaign
-  }
+  if (!campaign) throw new PasDeCampagneError(characterId)
 
   // Cherche une session ouverte
   let { data: session } = await supabase
@@ -42,7 +62,7 @@ export async function getOrCreateSession(characterId) {
     .eq('campaign_id', campaign.id)
     .order('created_at', { ascending: false })
     .limit(1)
-    .single()
+    .maybeSingle()
 
   // Crée la session si elle n'existe pas
   if (!session) {
@@ -89,11 +109,12 @@ export async function updateSession(sessionId, patch) {
 }
 
 // Liste toutes les campagnes de l'utilisateur avec perso + dernière session
+// `statut` remonte tel quel : c'est Campagnes.jsx qui sépare en cours / terminées.
 export async function listCampagnes() {
   const { data, error } = await supabase
     .from('campaigns')
     .select(`
-      id, titre, created_at,
+      id, titre, created_at, statut, fin_raison, terminee_le,
       characters ( id, nom, espece, classe, niveau, pv_actuels, pv_max ),
       game_sessions ( id, resume, lieu_actuel, created_at )
     `)

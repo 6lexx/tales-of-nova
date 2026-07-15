@@ -48,6 +48,46 @@ export async function demarrerNouvelleCampagne(characterId, options = {}) {
   return { campagne, session, arc }
 }
 
+/* ════════════════════════════════════════════════════════════
+   FIN DE CAMPAGNE
+   Déclenchée par le MJ via [FIN|mort|raison] ou [FIN|reussie|raison].
+   Le personnage n'est PAS touché : il reste réutilisable ailleurs.
+   ════════════════════════════════════════════════════════════ */
+
+export const STATUTS_FIN = {
+  mort: 'terminee_mort',
+  reussie: 'terminee_reussie',
+}
+
+/**
+ * Clôt une campagne. Idempotent : une campagne déjà terminée n'est pas re-clôturée
+ * (le MJ pourrait réémettre le tag ; on garde la première fin et sa date).
+ * @param {string} campaignId
+ * @param {'mort'|'reussie'} issue
+ * @param {string} raison  Texte narratif du MJ.
+ * @returns {Promise<object>} la campagne à jour
+ */
+export async function terminerCampagne(campaignId, issue, raison = null) {
+  const statut = STATUTS_FIN[issue]
+  if (!statut) throw new Error(`Issue de campagne inconnue : ${issue}`)
+
+  const { data, error } = await supabase
+    .from('campaigns')
+    .update({ statut, fin_raison: raison, terminee_le: new Date().toISOString() })
+    .eq('id', campaignId)
+    .eq('statut', 'en_cours')      // ← garde-fou : ne réécrit pas une fin déjà actée
+    .select()
+    .maybeSingle()
+  if (error) throw error
+  if (data) return data
+
+  // Rien mis à jour : soit déjà terminée, soit id inconnu. On relit pour le savoir.
+  const { data: existante, error: e2 } = await supabase
+    .from('campaigns').select('*').eq('id', campaignId).single()
+  if (e2) throw e2
+  return existante
+}
+
 // Titre lisible dérivé de l'arc (fallback sur le nom du perso).
 function titreDepuisArc(arc = {}, perso = {}) {
   const nomAntago = arc?.antagoniste?.nom?.trim()

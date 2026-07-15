@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { Heart, Shield, Zap, Star, Swords, ScrollText, Dice6, Send, ChevronLeft, BookOpen, X, GripHorizontal, User, Eye, Skull } from 'lucide-react'
 import { getCharacter } from '../services/characterService'
-import { getOrCreateSession, loadMessages, saveMessage, updateSession } from '../services/sessionService'
+import { getOrCreateSession, loadMessages, saveMessage, updateSession, getCampagne, PasDeCampagneError } from '../services/sessionService'
 import { buildSystemPrompt, sendMessage, parseResponse, buildAdminPrompt, sendAdminMessage } from '../services/claudeService'
 import { lancerD20, formatPourIA, lancerDes } from '../services/diceService'
 import Narration from '../components/Narration'
@@ -24,6 +24,9 @@ import * as combatService from '../services/combatService'
 const { getBourse } = inventaireService
 import MonteeNiveau from '../components/MonteeNiveau'
 import AlerteCombat from '../components/AlerteCombat'
+import AreneCombat from '../components/AreneCombat'
+import FinCampagne from '../components/FinCampagne'
+import * as campaignService from '../services/campaignService'
 import { getPendingMilestone } from '../services/progressionService'
 
 const C = {
@@ -95,6 +98,10 @@ export default function Game() {
   const [milestone, setMilestone] = useState(null)
   const [combat, setCombat] = useState({ actif: false, round: 0, tour: 0, ordre: [] })
   const [alerteCombat, setAlerteCombat] = useState(false)   // transition combat.actif false -> true
+  const [victoire, setVictoire] = useState(null)            // { issue, ordre, round } — snapshot pre-terminer()
+  const [finCampagne, setFinCampagne] = useState(null)      // { issue, raison } — la partie est close
+  const [campagne, setCampagne] = useState(null)
+  const [arenePos, setArenePos] = useState({ x: 300, y: 70 })   // fenetre de combat, cf. notePos
   const [impacts, setImpacts] = useState({})                // { [idEnnemi]: {total, formule, des, key} }
   const initDemandeeRef = useRef(false)                      // evite de rouvrir le de d'initiative
   const combatRef = useRef({ actif: false, round: 0, tour: 0, ordre: [] })  // lu par les closures (cf. sessionRef)
@@ -109,6 +116,7 @@ export default function Game() {
         setMilestone(await getPendingMilestone(characterId))
         const s = await getOrCreateSession(characterId)
         setSession(s)
+        try { setCampagne(await getCampagne(s.campaign_id)) } catch { /* noop */ }
         try { setCombat(await combatService.chargerCombat(s.id)) } catch { /* noop */ }
         sessionRef.current = s
         setNoteTexte(s.notes || '')
@@ -117,6 +125,9 @@ export default function Game() {
         await chargerQuetes(s.campaign_id)
         if (msgs.length === 0) await lancerPremierMessage(p, s)
       } catch (e) {
+        // Aucune campagne en cours : on ne fabrique plus de coquille sans arc,
+        // on renvoie vers le parametrage.
+        if (e instanceof PasDeCampagneError) { navigate(`/campagne/nouvelle/${characterId}`); return }
         setErreur(e.message)
       } finally {
         setInitLoading(false)
@@ -322,18 +333,27 @@ Rien d'hypothétique, rien qui appartient à un PNJ, rien que le personnage poss
     return JSON.parse(j.slice(a, b + 1))
   }
 
-  // opts.jetEnAttente : le message contenait un [JET] -> le resultat du d20 n'existe pas
-  // encore, donc tout tag chiffre ([COMBAT:degats], [PV]...) y est PREMATURE. On l'ignore :
-  // sinon une attaque ratee inflige quand meme ses degats.
+  // Deux verrous, parce que le MJ se trompe dans les deux sens :
+  //  - opts.jetEnAttente : le message contient un [JET] -> le d20 n'a pas encore ete lance,
+  //    tout tag chiffre y est PREMATURE (degats appliques avant meme le jet).
+  //  - opts.jetRate : le jet qui vient d'etre resolu est un ECHEC (total < DD, ou brut 1)
+  //    -> aucun degat ne peut toucher un ennemi. [PV] reste autorise : rater une
+  //    sauvegarde, c'est justement encaisser.
   async function traiterTagsMj(texteBrut, s, opts = {}) {
     const { texte, actions: actionsBrutes } = parseMjTags(texteBrut)
     let actions = actionsBrutes
-    if (opts.jetEnAttente) {
-      const estPremature = (a) =>
-        (a.kind === 'combat' && (a.op === 'degats' || a.op === 'soin')) || a.kind === 'pv'
+    if (opts.jetEnAttente || opts.jetRate) {
+      const estPremature = (a) => opts.jetEnAttente
+        ? ((a.kind === 'combat' && (a.op === 'degats' || a.op === 'soin')) || a.kind === 'pv')
+        : (a.kind === 'combat' && a.op === 'degats')
       const ignores = actionsBrutes.filter(estPremature)
       if (ignores.length) {
-        console.warn('[combat] tags chiffres IGNORES : emis avant le resultat du jet', ignores)
+        console.warn(
+          opts.jetEnAttente
+            ? '[combat] tags chiffres IGNORES : emis avant le resultat du jet'
+            : '[combat] degats IGNORES : le jet est un echec',
+          ignores,
+        )
         actions = actionsBrutes.filter((a) => !estPremature(a))
       }
     }
@@ -342,6 +362,13 @@ Rien d'hypothétique, rien qui appartient à un PNJ, rien que le personnage poss
     // Degats en formule ([COMBAT:degats|Gobelin|1d6+3]) : on lance ici, on injecte le total
     // dans l'action (applyMjActions et combatService.degats restent inchanges), et on garde
     // le detail des des pour l'animation d'impact.
+    // combatService.terminer() vide l'ordre : on photographie AVANT, sinon
+    // l'ecran de victoire n'a plus aucun ennemi a nommer.
+    const finCombat = actions.find((a) => a.kind === 'combat' && a.op === 'fin' && a.issue)
+    const snapshot = finCombat
+      ? { issue: finCombat.issue, ordre: [...(combatRef.current.ordre || [])], round: combatRef.current.round || 1 }
+      : null
+
     const impactsTour = []
     for (const a of actions) {
       if (a.kind === 'combat' && a.op === 'degats' && a.formule) {
@@ -358,7 +385,7 @@ Rien d'hypothétique, rien qui appartient à un PNJ, rien que le personnage poss
         await applyMjActions(
           actions,
           { characterId, campaignId: s.campaign_id, sessionId: s.id, invokeClaude: sendMessage },
-          { statusService, progressionService, codexService, questService, inventaireService, ressourceService, combatService },
+          { statusService, progressionService, codexService, questService, inventaireService, ressourceService, combatService, campaignService },
         )
       } catch (e) {
         console.error('applyMjActions —', e)
@@ -381,6 +408,18 @@ Rien d'hypothétique, rien qui appartient à un PNJ, rien que le personnage poss
       } else if (impactsTour.length) {
         // Cas d'un [PV:-n] sans aucun tag [COMBAT] : pas de rechargement, on garde l'ordre courant.
         montrerImpacts(combatRef.current.ordre, impactsTour)
+      }
+
+      // Ecran de victoire (issue victoire | victoire_majeure ; fuite/defaite/nu = rien).
+      if (snapshot && (snapshot.issue === 'victoire' || snapshot.issue === 'victoire_majeure')) {
+        setVictoire(snapshot)
+      }
+
+      // Fin de campagne : la base est deja a jour (applyMjActions -> terminerCampagne).
+      const fin = actions.find((a) => a.kind === 'fin')
+      if (fin) {
+        setFinCampagne({ issue: fin.issue, raison: fin.raison })
+        try { setCampagne(await getCampagne(s.campaign_id)) } catch { /* noop */ }
       }
     }
 
@@ -438,6 +477,17 @@ Rien d'hypothétique, rien qui appartient à un PNJ, rien que le personnage poss
     } finally {
       setLoading(false)
     }
+  }
+
+  // Deplacement de la fenetre de combat (meme mecanique que le bloc-notes).
+  function dragArene(e) {
+    e.preventDefault()
+    const startX = e.clientX - arenePos.x
+    const startY = e.clientY - arenePos.y
+    const onMove = (ev) => setArenePos({ x: ev.clientX - startX, y: ev.clientY - startY })
+    const onUp = () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp) }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
   }
 
   // Impacts de degats : on mappe le nom de cible du MJ sur l'ordre via la resolution
@@ -543,6 +593,9 @@ Rien d'hypothétique, rien qui appartient à un PNJ, rien que le personnage poss
     setPhaseJet('pret')
     setAffichageDe(null)
 
+    // Echec avere : brut 1, ou total sous le DD. Sans DD annonce on ne juge pas.
+    const jetRate = jet.critEchec || (!!jet.dd && !jet.critReussite && jet.total < jet.dd)
+
     const contenu = formatPourIA(jet)
     const nouveauxMessages = [...messages, { role: 'user', content: contenu }]
     setMessages(nouveauxMessages)
@@ -554,7 +607,7 @@ Rien d'hypothétique, rien qui appartient à un PNJ, rien que le personnage poss
       const historique = nouveauxMessages.filter((m) => m.role === 'user' || m.role === 'assistant').map((m) => ({ role: m.role, content: m.content }))
       const texte = await sendMessage(historique, system)
       const { texte: affichage0, jet: prochainJet } = parseResponse(texte)
-      const { texte: affichage, quetesCreees } = await traiterTagsMj(affichage0, session, { jetEnAttente: !!prochainJet })
+      const { texte: affichage, quetesCreees } = await traiterTagsMj(affichage0, session, { jetEnAttente: !!prochainJet, jetRate })
       const seps = quetesCreees.map((t) => ({ role: 'separator', content: t }))
       setMessages((prev) => [...prev, { role: 'assistant', content: affichage }, ...seps])
       await saveMessage(session.id, 'assistant', affichage)
@@ -615,13 +668,69 @@ Rien d'hypothétique, rien qui appartient à un PNJ, rien que le personnage poss
   // sauvegarde passent par la modale, ils ne sont pas concernes par ce verrou.
   const combattantCourant = combat.actif ? combat.ordre[combat.tour] : null
   const estMonTour = !combat.actif || combattantCourant?.type === 'perso' || combattantCourant?.init === null
-  const tourEnnemi = mode === 'mj' && combat.actif && !estMonTour && combattantCourant
+  // Narration du combat : elle s'affiche DANS la fenetre. Le fil reste derriere
+  // (il garde l'historique complet), mais on ne le lit plus pendant le combat.
+  const derniersMessages = messages.filter((m) => m.role === 'user' || m.role === 'assistant').slice(-6)
+  // La fenetre de combat s'ouvre avec le combat et reste tant que l'ecran de victoire
+  // n'a pas ete referme par « Reprendre l'aventure ». Le fil de narration continue derriere.
+  const enArene = mode === 'mj' && (combat.actif || !!victoire)
   const pvColor = pvPct > 60 ? C.teal : pvPct > 30 ? C.gold : C.red
+
+  // Le dock de des est rendu soit au fil (hors combat), soit dans la fenetre de
+  // combat : meme JSX, deux emplacements. On le sort en variable plutot que de
+  // le dupliquer.
+  const dockDe = modal ? (
+    <div style={S.diceDock}>
+      <div style={S.diceInfo}>
+        <span style={S.diceTitre}>Jet de {modal.label}</span>
+        {modal.dd && <span style={S.diceDD}>DD {modal.dd}</span>}
+      </div>
+      {phaseJet === 'pret' ? (
+        <button style={S.diceBtn} onClick={lancerLeDe}>
+          <Dice6 size={18} style={{ marginRight: 8 }} /> Lancer le d20
+        </button>
+      ) : (
+        <div style={S.diceResultat}>
+          <div style={{ ...S.diceBrut, color:
+            (phaseJet !== 'roule' && jetRef.current?.critReussite) ? C.gold :
+            (phaseJet !== 'roule' && jetRef.current?.critEchec) ? C.red : C.textPrime,
+            opacity: phaseJet === 'roule' ? 0.6 : 1 }}>
+            {affichageDe}
+          </div>
+          {phaseJet === 'total' && (
+            <>
+              <span style={S.dicePlus}>{fmtMod(jetRef.current.modificateur)}</span>
+              <span style={S.diceEgal}>=</span>
+              <span style={S.diceTotal}>{jetRef.current.total}</span>
+              {jetRef.current.critReussite && <span style={S.diceCritR}>réussite critique</span>}
+              {jetRef.current.critEchec && <span style={S.diceCritE}>échec critique</span>}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  ) : null
 
   return (
     <div style={S.page}>
       <style>{CSS}</style>
       {alerteCombat && <AlerteCombat onFermer={() => setAlerteCombat(false)} />}
+      {enArene && (
+        <AreneCombat
+          combat={combat} perso={perso} impacts={impacts}
+          victoire={victoire} onReprendre={() => setVictoire(null)}
+          combattantCourant={combattantCourant} estMonTour={estMonTour}
+          pos={arenePos} onDragStart={dragArene}
+          saisie={saisie} setSaisie={setSaisie} onSend={envoyer} onKeyDown={handleKey}
+          onTerminerTour={terminerMonTour} onLaisserAgir={laisserAgir}
+          loading={loading} jetEnCours={!!modal}
+          derniersMessages={derniersMessages} dockDe={dockDe}
+        />
+      )}
+      {finCampagne && (
+        <FinCampagne issue={finCampagne.issue} raison={finCampagne.raison}
+          perso={perso} titreCampagne={campagne?.titre} />
+      )}
 
       {/* ── COLONNE GAUCHE ── */}
       <aside style={S.sideLeft}>
@@ -787,47 +896,15 @@ Rien d'hypothétique, rien qui appartient à un PNJ, rien que le personnage poss
         </div>
         {erreur && <div style={S.erreur}>{erreur}</div>}
 
-        {/* ── PANNEAU DE DÉS (ancré, non bloquant) ── */}
-        {mode === 'mj' && modal && (
-          <div style={S.diceDock}>
-            <div style={S.diceInfo}>
-              <span style={S.diceTitre}>Jet de {modal.label}</span>
-              {modal.dd && <span style={S.diceDD}>DD {modal.dd}</span>}
-            </div>
+        {mode === 'mj' && modal && !enArene && dockDe}
 
-            {phaseJet === 'pret' ? (
-              <button style={S.diceBtn} onClick={lancerLeDe}>
-                <Dice6 size={18} style={{ marginRight: 8 }} /> Lancer le d20
-              </button>
-            ) : (
-              <div style={S.diceResultat}>
-                <div style={{ ...S.diceBrut, color:
-                  (phaseJet !== 'roule' && jetRef.current?.critReussite) ? C.gold :
-                  (phaseJet !== 'roule' && jetRef.current?.critEchec) ? C.red : C.textPrime,
-                  opacity: phaseJet === 'roule' ? 0.6 : 1 }}>
-                  {affichageDe}
-                </div>
-                {phaseJet === 'total' && (
-                  <>
-                    <span style={S.dicePlus}>{fmtMod(jetRef.current.modificateur)}</span>
-                    <span style={S.diceEgal}>=</span>
-                    <span style={S.diceTotal}>{jetRef.current.total}</span>
-                    {jetRef.current.critReussite && <span style={S.diceCritR}>réussite critique</span>}
-                    {jetRef.current.critEchec && <span style={S.diceCritE}>échec critique</span>}
-                  </>
-                )}
-              </div>
-            )}
-          </div>
-        )}
-
-        {tourEnnemi ? (
+        {enArene ? (
           <div style={S.tourZone}>
-            <div style={S.tourLbl}>Ce n'est pas ton tour — {combattantCourant.nom} va agir.</div>
-            <button style={{ ...S.tourBtn, opacity: loading || !!modal ? 0.5 : 1 }}
-              onClick={() => laisserAgir(combattantCourant.nom)} disabled={loading || !!modal}>
-              <Swords size={16} style={{ marginRight: 8 }} /> Laisser agir {combattantCourant.nom}
-            </button>
+            <div style={S.tourLbl}>
+              {victoire
+                ? 'Combat terminé — referme la fenêtre pour reprendre l\u2019aventure.'
+                : 'Combat en cours — agis depuis la fenêtre de combat.'}
+            </div>
           </div>
         ) : (
           <div style={S.saisieZone}>
@@ -835,25 +912,17 @@ Rien d'hypothétique, rien qui appartient à un PNJ, rien que le personnage poss
               onKeyDown={handleKey}
               placeholder={mode === 'admin' ? 'Interroge le MJ hors-jeu… (Entrée pour envoyer)' : 'Décrivez votre action… (Entrée pour envoyer)'}
               disabled={loading || (mode === 'mj' && !!modal)} rows={3} />
-            <div style={S.saisieBtns}>
-              <button style={{ ...S.sendBtn, ...(mode === 'admin' ? S.sendBtnAdmin : {}), opacity: loading || !saisie.trim() ? 0.5 : 1 }}
-                onClick={onSend} disabled={loading || !saisie.trim() || (mode === 'mj' && !!modal)}>
-                <Send size={18} />
-              </button>
-              {mode === 'mj' && combat.actif && combattantCourant?.type === 'perso' && (
-                <button style={{ ...S.finTourBtn, opacity: loading || !!modal ? 0.5 : 1 }}
-                  onClick={terminerMonTour} disabled={loading || !!modal} title="Enchaîne autant d'actions que tu veux, puis termine">
-                  Terminer mon tour
-                </button>
-              )}
-            </div>
+            <button style={{ ...S.sendBtn, ...(mode === 'admin' ? S.sendBtnAdmin : {}), opacity: loading || !saisie.trim() ? 0.5 : 1 }}
+              onClick={onSend} disabled={loading || !saisie.trim() || (mode === 'mj' && !!modal)}>
+              <Send size={18} />
+            </button>
           </div>
         )}
       </main>
 
       {/* ── COLONNE DROITE ── */}
       <aside style={S.sideRight}>
-        {combat.actif && (
+        {combat.actif && !enArene && (
           <div style={S.rightSection}>
             <div style={S.rightTitle}><Swords size={14} /> Combat — round {combat.round}</div>
             <div style={S.combatOrdre}>

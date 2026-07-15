@@ -193,7 +193,21 @@ Noms EXACTS à réutiliser dans les tags : ${noms || '—'}.
 - [COMBAT:tour] dès qu'un ENNEMI a fini d'agir, à la fin du message qui narre son action.
   N'émets JAMAIS [COMBAT:tour] pour le tour du joueur : lui seul décide quand il a fini, via un bouton
   de l'interface, et l'ordre a déjà avancé quand tu reçois « Je termine mon tour ».
-- [COMBAT:retirer|nom] dès qu'un ennemi meurt ou fuit ; [COMBAT:fin] quand il n'en reste aucun.
+- [COMBAT:mort|nom] OBLIGATOIRE dès qu'un ennemi tombe, QUELLE QUE SOIT la raison : PV épuisés,
+  coup de grâce, chute, sort, exécution narrative. Si tu écris qu'une créature s'effondre sans
+  émettre ce tag, elle reste DEBOUT dans l'ordre d'initiative et son tour arrive quand même.
+  Elle reste affichée comme vaincue : ne la retire pas.
+- [COMBAT:retirer|nom] UNIQUEMENT si un ennemi FUIT ou quitte la scène vivant.
+  Un ennemi tué ne se retire PAS : ses PV tombent à 0, le système le marque hors de combat
+  et il reste dans l'ordre — c'est ce qui permet à l'écran de victoire de le nommer.
+- Fin du combat, quand plus aucun adversaire ne peut agir. L'issue pilote l'écran affiché :
+  [COMBAT:fin|victoire]         → affrontement ordinaire remporté (patrouille, rôdeurs, embuscade banale).
+  [COMBAT:fin|victoire_majeure] → victoire MARQUANTE, à réserver : boss, antagoniste, créature nommée,
+                                  fin d'acte, combat qui change le cours de l'histoire. Sois avare :
+                                  si tout est majeur, plus rien ne l'est.
+  [COMBAT:fin|fuite]            → le joueur ou les ennemis rompent le combat.
+  [COMBAT:fin|defaite]          → le joueur perd sans mourir (capturé, laissé pour mort, épargné).
+  [COMBAT:fin] nu               → clôture discrète, aucun écran.
 Les PV ci-dessus sont pour TOI : ne les cite jamais. Décris l'état (il chancelle, il saigne, il tient encore).`
 }
 
@@ -211,7 +225,17 @@ export function buildBlocTags() {
 - [QUETE:creer|type|titre|description], [QUETE:indice|titre|texte], [QUETE:accomplir|titre], [QUETE:echouer|titre].
 - [PALIER: niveau:X | raison:"..."] : montée de niveau, aux moments clés cohérents avec l'histoire.
 - [COMBAT:debut] puis [COMBAT:ennemi|nom|pv|ca|init] pour chaque adversaire : démarre un combat suivi. L'initiative du joueur est lancée par LUI dans l'interface — ne la lance pas, ne l'invente pas, ne la commente pas. En combat : [COMBAT:degats|nom|FORMULE] quand un ennemi subit des dégâts — donne la FORMULE (ex. [COMBAT:degats|Gobelin|1d6+3]), c'est le système qui lance les dés et applique le résultat. Sur un critique, écris la formule déjà doublée (2d6+3). N'annonce JAMAIS un chiffre de dégâts toi-même et ne décris pas les PV restants de l'ennemi : décris son état (il chancelle, il saigne, il tient encore). Aussi : [COMBAT:soin|nom|n], [COMBAT:tour] pour passer au combattant suivant, [COMBAT:retirer|nom] si un ennemi fuit/meurt, [COMBAT:fin] à la fin. Les dégâts subis PAR le joueur passent par [PV:-n] (pas [COMBAT]). Une attaque se résout via [JET] (DD = CA de la cible).
-- [CODEX:...], [RECAP] : enrichissement et récapitulatif.`
+- [CODEX:...], [RECAP] : enrichissement et récapitulatif.
+- [FIN:mort|raison] : la campagne s'arrête, le personnage est MORT. À n'émettre que s'il n'existe
+  AUCUNE issue de survie crédible — 0 PV n'est PAS la mort (c'est l'inconscience, puis les jets
+  contre la mort). Un allié peut stabiliser, un ennemi peut épargner ou capturer, la fuite reste
+  possible : tant qu'une de ces portes est ouverte, tu ne l'émets pas. Une fois émis, c'est
+  DÉFINITIF et irréversible — la campagne passe en lecture seule. La « raison » est une phrase
+  courte, la cause narrative de la mort ("Éventré par la goule blanche dans la nef de Valdecroix").
+- [FIN:reussie|raison] : la campagne s'achève sur l'accomplissement du grand objectif de l'arc.
+  Pas une quête réussie, pas un acte bouclé : la conclusion de l'histoire. La « raison » résume
+  ce qui a été accompli.
+Ces deux tags clôturent la partie : n'en émets aucun tant que l'histoire peut continuer.`
 }
 
 export function buildBlocRoleAdmin() {

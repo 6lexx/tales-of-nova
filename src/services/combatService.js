@@ -87,6 +87,18 @@ export async function degats(sessionId, cible, n) {
   return sauver(sessionId, etat, { ...combat, ordre });
 }
 
+// Marque un ennemi hors de combat SANS le retirer de l'ordre : il reste affiche
+// (icone crane) et l'ecran de victoire peut le nommer. Necessaire car le MJ tue
+// souvent par la narration sans que le cumul des degats atteigne 0 PV — sans ce
+// tag l'ennemi restait debout et son tour arrivait quand meme.
+export async function marquerMort(sessionId, nom) {
+  const { etat, combat } = await lire(sessionId);
+  const e = trouve(combat.ordre, nom);
+  if (!e) return combat;
+  const ordre = combat.ordre.map((x) => (x.id === e.id ? { ...x, pv: 0, statut: 'mort' } : x));
+  return sauver(sessionId, etat, { ...combat, ordre });
+}
+
 export async function soin(sessionId, cible, n) {
   const { etat, combat } = await lire(sessionId);
   const e = trouve(combat.ordre, cible);

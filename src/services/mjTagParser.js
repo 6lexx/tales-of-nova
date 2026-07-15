@@ -10,6 +10,8 @@
 //   [PALIER: niveau:4 | raison:"Fin de l'acte I"]
 //   [CODEX: cat:pnj | cle:"padhrane" | titre:"Padhrane" | resume:"..." | detail:1]
 //   [RECAP] (signale au front de déclencher generateRecap à la clôture)
+//   [FIN:mort|raison] / [FIN:reussie|raison]  (clôt la campagne — campaigns.statut)
+//   [COMBAT:fin|victoire|victoire_majeure|fuite|defaite]  (l'issue pilote l'écran de fin)
 //   [QUETE:creer|type|titre|description]  (type: immediate|principale|secondaire)
 //   [QUETE:indice|titre|texte]
 //   [QUETE:accomplir|titre]
@@ -20,7 +22,7 @@
 
 import { estFormule } from './diceService'
 
-const TAG_RE = /\[(CONDITION|REPOS|PALIER|CODEX|RECAP|QUETE|OBJET|OR|PV|SORT|RESSOURCE|COMBAT)(?::([^\]]*))?\]/gi
+const TAG_RE = /\[(CONDITION|REPOS|PALIER|CODEX|RECAP|QUETE|OBJET|OR|PV|SORT|RESSOURCE|COMBAT|FIN)(?::([^\]]*))?\]/gi
 
 // "cle:empoisonne | source:\"piège\" | duree:3 rounds" -> {cle, source, duree}
 function parseFields(raw) {
@@ -131,8 +133,19 @@ export function parseMjTags(text) {
         }
         else if (op === 'soin' && seg[1]) actions.push({ kind: 'combat', op: 'soin', cible: seg[1], n: parseInt(seg[2], 10) || 0 })
         else if (op === 'tour') actions.push({ kind: 'combat', op: 'tour' })
+        else if (op === 'mort' && seg[1]) actions.push({ kind: 'combat', op: 'mort', nom: seg[1] })
         else if (op === 'retirer' && seg[1]) actions.push({ kind: 'combat', op: 'retirer', nom: seg[1] })
-        else if (op === 'fin') actions.push({ kind: 'combat', op: 'fin' })
+        // L'issue est optionnelle : [COMBAT:fin] nu = clôture silencieuse, aucun écran.
+        else if (op === 'fin') actions.push({ kind: 'combat', op: 'fin', issue: (seg[1] || '').toLowerCase() || null })
+        break
+      }
+      case 'FIN': {
+        // Fin de campagne. Le personnage n'est PAS touché : il reste réutilisable.
+        const seg = (body || '').split('|').map((s) => s.trim().replace(/^"|"$/g, ''))
+        const issue = (seg[0] || '').toLowerCase()
+        if (issue === 'mort' || issue === 'reussie') {
+          actions.push({ kind: 'fin', issue, raison: seg[1] || null })
+        }
         break
       }
       case 'PV': {
@@ -151,7 +164,7 @@ export function parseMjTags(text) {
 // après réception de la réponse MJ.
 export async function applyMjActions(actions, ctx, services) {
   const { characterId, campaignId, sessionId, invokeClaude } = ctx
-  const { statusService, progressionService, codexService, questService, inventaireService, ressourceService, combatService } = services
+  const { statusService, progressionService, codexService, questService, inventaireService, ressourceService, combatService, campaignService } = services
 
   for (const a of actions) {
     try {
@@ -175,6 +188,7 @@ export async function applyMjActions(actions, ctx, services) {
         else if (a.op === 'degats') await combatService?.degats(sessionId, a.cible, a.n)
         else if (a.op === 'soin') await combatService?.soin(sessionId, a.cible, a.n)
         else if (a.op === 'tour') await combatService?.tourSuivant(sessionId)
+        else if (a.op === 'mort') await combatService?.marquerMort(sessionId, a.nom)
         else if (a.op === 'retirer') await combatService?.retirer(sessionId, a.nom)
         else if (a.op === 'fin') await combatService?.terminer(sessionId)
       } else if (a.kind === 'milestone') {
@@ -206,6 +220,8 @@ export async function applyMjActions(actions, ctx, services) {
         await inventaireService?.crediterBourse(characterId, { po: a.po, pa: a.pa, pc: a.pc })
       } else if (a.kind === 'pv') {
         await statusService?.ajusterPV(characterId, a.delta)
+      } else if (a.kind === 'fin') {
+        await campaignService?.terminerCampagne(campaignId, a.issue, a.raison)
       }
     } catch (err) {
       console.error('applyMjActions —', a.kind, err)
