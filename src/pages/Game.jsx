@@ -253,7 +253,7 @@ export default function Game() {
     const intro = [{ role: 'user', content: "L'aventure commence." }]
     const texte = await sendMessage(intro, system)
     const { texte: affichage0, jet } = parseResponse(texte)
-    const { texte: affichage, quetesCreees } = await traiterTagsMj(affichage0, s)
+    const { texte: affichage, quetesCreees } = await traiterTagsMj(affichage0, s, { jetEnAttente: !!jet })
     const msgMJ = { role: 'assistant', content: affichage }
     const seps = quetesCreees.map((t) => ({ role: 'separator', content: t }))
     setMessages([msgMJ, ...seps])
@@ -265,6 +265,13 @@ export default function Game() {
     if (!saisie.trim() || loading) return
     const contenu = saisie.trim()
     setSaisie('')
+    await envoyerTexte(contenu)
+  }
+
+  // Envoi d'un tour de narration. Extrait de envoyer() pour que les boutons de combat
+  // (terminer mon tour / laisser agir un ennemi) passent par le meme chemin.
+  async function envoyerTexte(contenu) {
+    if (!contenu || loading) return
     setErreur('')
     const msgJoueur = { role: 'user', content: contenu }
     const nouveauxMessages = [...messages, msgJoueur]
@@ -277,7 +284,7 @@ export default function Game() {
       const historique = nouveauxMessages.filter((m) => m.role === 'user' || m.role === 'assistant').map((m) => ({ role: m.role, content: m.content }))
       const texte = await sendMessage(historique, system)
       const { texte: affichage0, jet } = parseResponse(texte)
-      const { texte: affichage, quetesCreees } = await traiterTagsMj(affichage0, session)
+      const { texte: affichage, quetesCreees } = await traiterTagsMj(affichage0, session, { jetEnAttente: !!jet })
       const msgMJ = { role: 'assistant', content: affichage }
       const seps = quetesCreees.map((t) => ({ role: 'separator', content: t }))
       setMessages((prev) => [...prev, msgMJ, ...seps])
@@ -315,8 +322,21 @@ Rien d'hypothétique, rien qui appartient à un PNJ, rien que le personnage poss
     return JSON.parse(j.slice(a, b + 1))
   }
 
-  async function traiterTagsMj(texteBrut, s) {
-    const { texte, actions } = parseMjTags(texteBrut)
+  // opts.jetEnAttente : le message contenait un [JET] -> le resultat du d20 n'existe pas
+  // encore, donc tout tag chiffre ([COMBAT:degats], [PV]...) y est PREMATURE. On l'ignore :
+  // sinon une attaque ratee inflige quand meme ses degats.
+  async function traiterTagsMj(texteBrut, s, opts = {}) {
+    const { texte, actions: actionsBrutes } = parseMjTags(texteBrut)
+    let actions = actionsBrutes
+    if (opts.jetEnAttente) {
+      const estPremature = (a) =>
+        (a.kind === 'combat' && (a.op === 'degats' || a.op === 'soin')) || a.kind === 'pv'
+      const ignores = actionsBrutes.filter(estPremature)
+      if (ignores.length) {
+        console.warn('[combat] tags chiffres IGNORES : emis avant le resultat du jet', ignores)
+        actions = actionsBrutes.filter((a) => !estPremature(a))
+      }
+    }
     const quetesCreees = actions.filter((a) => a.kind === 'quest' && a.op === 'creer').map((a) => a.titre)
 
     // Degats en formule ([COMBAT:degats|Gobelin|1d6+3]) : on lance ici, on injecte le total
@@ -327,6 +347,10 @@ Rien d'hypothétique, rien qui appartient à un PNJ, rien que le personnage poss
       if (a.kind === 'combat' && a.op === 'degats' && a.formule) {
         const r = lancerDes(a.formule)
         if (r) { a.n = r.total; impactsTour.push({ cible: a.cible, ...r }) }
+      }
+      // Degats subis par le joueur ([PV:-n]) : meme mise en valeur que sur les ennemis.
+      if (a.kind === 'pv' && a.delta < 0) {
+        impactsTour.push({ id: 'perso', total: -a.delta, formule: '', des: [] })
       }
     }
     if (actions.length) {
@@ -354,6 +378,9 @@ Rien d'hypothétique, rien qui appartient à un PNJ, rien que le personnage poss
           if (actions.some((a) => a.kind === 'combat' && a.op === 'debut')) setAlerteCombat(true)
           if (impactsTour.length) montrerImpacts(c.ordre, impactsTour)
         } catch { /* noop */ }
+      } else if (impactsTour.length) {
+        // Cas d'un [PV:-n] sans aucun tag [COMBAT] : pas de rechargement, on garde l'ordre courant.
+        montrerImpacts(combatRef.current.ordre, impactsTour)
       }
     }
 
@@ -418,8 +445,9 @@ Rien d'hypothétique, rien qui appartient à un PNJ, rien que le personnage poss
   function montrerImpacts(ordre, liste) {
     const ajouts = {}
     for (const imp of liste) {
-      const e = combatService.trouverCible(ordre, imp.cible)
-      if (e) ajouts[e.id] = { ...imp, key: Date.now() + Math.random() }
+      // imp.id : cible deja connue (le joueur). Sinon on resout le nom ecrit par le MJ.
+      const id = imp.id ?? combatService.trouverCible(ordre, imp.cible)?.id
+      if (id) ajouts[id] = { ...imp, key: Date.now() + Math.random() }
     }
     if (!Object.keys(ajouts).length) return
     setImpacts((p) => ({ ...p, ...ajouts }))
@@ -526,7 +554,7 @@ Rien d'hypothétique, rien qui appartient à un PNJ, rien que le personnage poss
       const historique = nouveauxMessages.filter((m) => m.role === 'user' || m.role === 'assistant').map((m) => ({ role: m.role, content: m.content }))
       const texte = await sendMessage(historique, system)
       const { texte: affichage0, jet: prochainJet } = parseResponse(texte)
-      const { texte: affichage, quetesCreees } = await traiterTagsMj(affichage0, session)
+      const { texte: affichage, quetesCreees } = await traiterTagsMj(affichage0, session, { jetEnAttente: !!prochainJet })
       const seps = quetesCreees.map((t) => ({ role: 'separator', content: t }))
       setMessages((prev) => [...prev, { role: 'assistant', content: affichage }, ...seps])
       await saveMessage(session.id, 'assistant', affichage)
@@ -552,6 +580,20 @@ Rien d'hypothétique, rien qui appartient à un PNJ, rien que le personnage poss
   async function faireRepos(type) {
     try { setPerso(await ressourceService.repos(characterId, type)) } catch (e) { console.error('repos —', e) }
   }
+  // Le joueur seul sait quand il a fini : on avance l'ordre localement (deterministe),
+  // puis on previent le MJ. buildBlocCombat lui interdit d'emettre [COMBAT:tour] pour le joueur.
+  async function terminerMonTour() {
+    if (loading) return
+    try { setCombat(await combatService.tourSuivant(session.id)) } catch (e) { console.error('combat —', e) }
+    await envoyerTexte('Je termine mon tour.')
+  }
+
+  // Tour d'un ennemi : c'est le MJ qui narre son action puis emet [COMBAT:tour].
+  async function laisserAgir(nom) {
+    if (loading) return
+    await envoyerTexte(`${nom} agit.`)
+  }
+
   async function tourCombat() {
     try { setCombat(await combatService.tourSuivant(session.id)) } catch (e) { console.error('combat —', e) }
   }
@@ -569,6 +611,11 @@ Rien d'hypothétique, rien qui appartient à un PNJ, rien que le personnage poss
   if (erreur && !perso) return <div style={S.centrer}><p style={{ color: C.red }}>{erreur}</p></div>
 
   const pvPct = perso ? Math.max(0, Math.min(100, (perso.pv_actuels / perso.pv_max) * 100)) : 0
+  // Tour courant : le joueur ne peut agir librement que pendant le sien. Les jets de
+  // sauvegarde passent par la modale, ils ne sont pas concernes par ce verrou.
+  const combattantCourant = combat.actif ? combat.ordre[combat.tour] : null
+  const estMonTour = !combat.actif || combattantCourant?.type === 'perso' || combattantCourant?.init === null
+  const tourEnnemi = mode === 'mj' && combat.actif && !estMonTour && combattantCourant
   const pvColor = pvPct > 60 ? C.teal : pvPct > 30 ? C.gold : C.red
 
   return (
@@ -774,16 +821,34 @@ Rien d'hypothétique, rien qui appartient à un PNJ, rien que le personnage poss
           </div>
         )}
 
-        <div style={S.saisieZone}>
-          <textarea style={S.saisie} value={saisie} onChange={(e) => setSaisie(e.target.value)}
-            onKeyDown={handleKey}
-            placeholder={mode === 'admin' ? 'Interroge le MJ hors-jeu… (Entrée pour envoyer)' : 'Décrivez votre action… (Entrée pour envoyer)'}
-            disabled={loading || (mode === 'mj' && !!modal)} rows={3} />
-          <button style={{ ...S.sendBtn, ...(mode === 'admin' ? S.sendBtnAdmin : {}), opacity: loading || !saisie.trim() ? 0.5 : 1 }}
-            onClick={onSend} disabled={loading || !saisie.trim() || (mode === 'mj' && !!modal)}>
-            <Send size={18} />
-          </button>
-        </div>
+        {tourEnnemi ? (
+          <div style={S.tourZone}>
+            <div style={S.tourLbl}>Ce n'est pas ton tour — {combattantCourant.nom} va agir.</div>
+            <button style={{ ...S.tourBtn, opacity: loading || !!modal ? 0.5 : 1 }}
+              onClick={() => laisserAgir(combattantCourant.nom)} disabled={loading || !!modal}>
+              <Swords size={16} style={{ marginRight: 8 }} /> Laisser agir {combattantCourant.nom}
+            </button>
+          </div>
+        ) : (
+          <div style={S.saisieZone}>
+            <textarea style={S.saisie} value={saisie} onChange={(e) => setSaisie(e.target.value)}
+              onKeyDown={handleKey}
+              placeholder={mode === 'admin' ? 'Interroge le MJ hors-jeu… (Entrée pour envoyer)' : 'Décrivez votre action… (Entrée pour envoyer)'}
+              disabled={loading || (mode === 'mj' && !!modal)} rows={3} />
+            <div style={S.saisieBtns}>
+              <button style={{ ...S.sendBtn, ...(mode === 'admin' ? S.sendBtnAdmin : {}), opacity: loading || !saisie.trim() ? 0.5 : 1 }}
+                onClick={onSend} disabled={loading || !saisie.trim() || (mode === 'mj' && !!modal)}>
+                <Send size={18} />
+              </button>
+              {mode === 'mj' && combat.actif && combattantCourant?.type === 'perso' && (
+                <button style={{ ...S.finTourBtn, opacity: loading || !!modal ? 0.5 : 1 }}
+                  onClick={terminerMonTour} disabled={loading || !!modal} title="Enchaîne autant d'actions que tu veux, puis termine">
+                  Terminer mon tour
+                </button>
+              )}
+            </div>
+          </div>
+        )}
       </main>
 
       {/* ── COLONNE DROITE ── */}
@@ -1208,6 +1273,11 @@ const S = {
   combatFill: { height: '100%' },
   combatPv: { fontSize: 11, color: '#c4bcd4', minWidth: 40, textAlign: 'right' },
   combatBtns: { display: 'flex', gap: 6, marginTop: 10 },
+  saisieBtns: { display: 'flex', flexDirection: 'column', gap: 6 },
+  finTourBtn: { background: 'none', border: '1px solid #c9a84c', color: '#c9a84c', borderRadius: 8, padding: '6px 8px', fontSize: 10.5, cursor: 'pointer', fontFamily: "'Cinzel', serif", letterSpacing: .3, whiteSpace: 'nowrap' },
+  tourZone: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, padding: '16px 14px', borderTop: '1px solid #252a3a', background: '#0f1118' },
+  tourLbl: { fontSize: 12, color: '#8a8aaa', fontStyle: 'italic' },
+  tourBtn: { display: 'flex', alignItems: 'center', background: 'linear-gradient(135deg, #3a1414 0%, #1c1010 100%)', border: '1px solid #5a2828', color: '#e8e0f0', borderRadius: 9, padding: '10px 18px', fontSize: 13, cursor: 'pointer', fontFamily: "'Cinzel', serif" },
   rightTitle: { display: 'flex', alignItems: 'center', gap: 7, fontSize: 11.5, color: '#c9a84c', letterSpacing: 1.5, textTransform: 'uppercase', fontFamily: "'Cinzel', serif", marginBottom: 10 },
   rightEmpty: { margin: 0, fontSize: 12.5, color: '#4a4a6a', fontStyle: 'italic' },
   noteBtn: { display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '9px 12px', background: '#1a1e2b', border: '1px solid #252a3a', borderRadius: 8, color: '#8a8aaa', fontSize: 13, cursor: 'pointer' },

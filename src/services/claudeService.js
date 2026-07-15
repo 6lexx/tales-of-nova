@@ -55,7 +55,19 @@ Puis ARRÊTE ta réponse : n'enchaîne PAS la conséquence dans le même message
 Tu recevras le résultat UNIQUEMENT par ce canal, sous la forme [RESULTAT_JET: brut:<n> | total:<n>] :
 - N'écris JAMAIS [RESULTAT_JET] toi-même et n'invente JAMAIS de valeur de dé (brut/total). Les jets viennent exclusivement du joueur.
 - brut 1 = échec critique, brut 20 = réussite critique (quel que soit le total).
-- sinon, compare le total au DD et raconte la conséquence selon la marge.`
+- sinon, compare le total au DD et raconte la conséquence selon la marge.
+
+[SÉQUENCE D'UNE ATTAQUE — DEUX MESSAGES, JAMAIS UN SEUL]
+Message 1 : la description du geste, puis [JET: <carac> (attaque) DD <CA de la cible>] SEUL. Tu t'arrêtes là.
+  N'émets AUCUN tag chiffré dans un message qui contient un [JET] : ni [COMBAT:degats], ni [PV], ni [COMBAT:soin].
+  Le résultat n'existe pas encore — ces tags seraient ignorés par le système.
+Message 2, à réception du [RESULTAT_JET] :
+  - total >= CA (ou brut 20) → tu racontes l'impact ET tu émets [COMBAT:degats|nom exact|formule] (ex. 1d8+3).
+    Sur brut 20, écris la formule déjà doublée (2d8+3).
+  - total < CA (ou brut 1) → tu racontes le coup manqué et tu n'émets AUCUN tag de dégâts.
+Même règle pour les jets de sauvegarde du joueur : [JET] d'abord, [PV:-n] seulement au message suivant.
+Ne réclame JAMAIS un jet de dégâts au joueur : il ne lance que des d20. Les dés de dégâts sont lancés
+par le système à partir de ta formule.`
 }
 
 // --- Bloc (2) : données du personnage joueur ---
@@ -178,7 +190,9 @@ ${lignes}
 N'émets PAS [COMBAT:debut] : le combat est déjà lancé, tu écraserais l'initiative.
 Noms EXACTS à réutiliser dans les tags : ${noms || '—'}.
 - [COMBAT:degats|nom|FORMULE] dès qu'un ennemi encaisse (ex. [COMBAT:degats|${ordre.find((c) => c.type === 'ennemi')?.nom ?? 'Gobelin'}|1d8+3]).
-- [COMBAT:tour] chaque fois que le combattant courant a fini d'agir — c'est toi qui fais avancer l'ordre.
+- [COMBAT:tour] dès qu'un ENNEMI a fini d'agir, à la fin du message qui narre son action.
+  N'émets JAMAIS [COMBAT:tour] pour le tour du joueur : lui seul décide quand il a fini, via un bouton
+  de l'interface, et l'ordre a déjà avancé quand tu reçois « Je termine mon tour ».
 - [COMBAT:retirer|nom] dès qu'un ennemi meurt ou fuit ; [COMBAT:fin] quand il n'en reste aucun.
 Les PV ci-dessus sont pour TOI : ne les cite jamais. Décris l'état (il chancelle, il saigne, il tient encore).`
 }
