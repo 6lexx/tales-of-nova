@@ -63,7 +63,6 @@ export const TIEFFELIN = {
   ageMaturite: 18,
   ageMax: 100,
   langues: ["commun", "infernal"],
-  languesAuChoix: 0,
   traits: TRAITS,
   sousRaces: SOUS_RACES,
   sousRaceRequise: false,

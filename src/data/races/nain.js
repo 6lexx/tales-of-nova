@@ -129,7 +129,6 @@ export const NAIN = {
   ageMaturite: 50,
   ageMax: 350,
   langues: ["commun", "nain"],
-  languesAuChoix: 0,
   traits: TRAITS,
   sousRaces: SOUS_RACES,
   sousRaceRequise: true,

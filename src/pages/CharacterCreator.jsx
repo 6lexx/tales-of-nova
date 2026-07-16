@@ -8,6 +8,8 @@ import { genererHistoire as genererHistoireIA } from "../services/histoireServic
 import { createCharacter } from "../services/characterService";
 import { initFicheGuerrier } from "../services/guerrierService";
 import { STYLES_COMBAT } from "../data/classes/guerrier.js";
+import { classeParNom } from "../data/classes/index.js";
+import * as Races from "../data/races/index.js";
 import { ARMURES } from "../data/equipement/armures.js";
 import { ARMES } from "../data/equipement/armes.js";
 import { supabase } from "../lib/supabase";
@@ -38,34 +40,49 @@ const C = {
 };
 
 /* ── DONNÉES DE JEU ───────────────────────────────────────── */
-/* Sous-races SRD dont les traits existent dans features (par id d'espèce) */
-const SUB_RACES = {
-  elfe: ["Haut-elfe", "Elfe des bois", "Elfe noir (Drow)"],
-  nain: ["Nain des collines", "Nain des montagnes"],
-  halfelin: ["Pied-léger", "Robuste"],
-  gnome: ["Gnome des forêts", "Gnome des roches"],
+/* Sous-races : dérivées des fichiers de races (src/data/races/*.js).
+   Elles sont désormais identifiées par `id` ("haut_elfe"), plus par libellé.
+   ATTENTION : les personnages créés avant ce changement ont
+   `fiche.sousEspece = "Haut-elfe"` (libellé). Rien ne les relit aujourd'hui. */
+const SUB_RACES = Object.fromEntries(
+  Object.keys(Races.RACES).map((rid) => [rid, Races.sousRacesDisponibles(rid)])
+);
+
+/* Formatte { DEX: 2, INT: 1 } en "+2 DEX · +1 INT" */
+const fmtBonus = (b) =>
+  Object.entries(b).map(([k, v]) => `+${v} ${k}`).join(" · ") || "—";
+
+/* Texte descriptif de chaque espèce — copie d'interface uniquement.
+   Les bonus et les traits ne sont PAS écrits ici : ils sont lus dans les
+   fichiers de races, seule source. Toute divergence SRD se corrige là-bas. */
+const ESPECE_DESC = {
+  humain:      "Polyvalents, ambitieux, partout chez eux.",
+  elfe:        "Gracieux, perspicaces, liés à la magie.",
+  nain:        "Robustes, tenaces, gardiens de la pierre.",
+  orc:         "Puissants, endurants, jamais à terre.",
+  tieffelin:   "Marqués par un héritage infernal.",
+  "demi-elfe": "Entre deux mondes, charismatiques.",
+  halfelin:    "Petits, chanceux, pleins d'allant.",
+  drakeide:    "Sang de dragon, souffle élémentaire.",
+  gnome:       "Petits inventeurs rusés et curieux.",
 };
 
-const ESPECES = [
-  { id: "humain", nom: "Humain", desc: "Polyvalents, ambitieux, partout chez eux.", bonus: "+1 à toutes les caractéristiques", trait: "Don supplémentaire au niveau 1",
-    bonusStats: { FOR: 1, DEX: 1, CON: 1, INT: 1, SAG: 1, CHA: 1 }, bonusLibres: 0 },
-  { id: "elfe", nom: "Elfe", desc: "Gracieux, perspicaces, liés à la magie.", bonus: "+2 DEX · +1 INT", trait: "Vision dans le noir · Sens aiguisés",
-    bonusStats: { DEX: 2, INT: 1 }, bonusLibres: 0 },
-  { id: "nain", nom: "Nain", desc: "Robustes, tenaces, gardiens de la pierre.", bonus: "+2 CON · +1 FOR", trait: "Résistance au poison · Démarche assurée",
-    bonusStats: { CON: 2, FOR: 1 }, bonusLibres: 0 },
-  { id: "orc", nom: "Demi-orc", desc: "Puissants, endurants, jamais à terre.", bonus: "+2 FOR · +1 CON", trait: "Acharnement · Charge agressive",
-    bonusStats: { FOR: 2, CON: 1 }, bonusLibres: 0 },
-  { id: "tieffelin", nom: "Tieffelin", desc: "Marqués par un héritage infernal.", bonus: "+2 CHA · +1 INT", trait: "Résistance au feu · Legs infernal",
-    bonusStats: { CHA: 2, INT: 1 }, bonusLibres: 0 },
-  { id: "demi-elfe", nom: "Demi-elfe", desc: "Entre deux mondes, charismatiques.", bonus: "+2 CHA · +1 au choix ×2", trait: "Ascendance féerique",
-    bonusStats: { CHA: 2 }, bonusLibres: 2 },
-  { id: "halfelin", nom: "Halfelin", desc: "Petits, chanceux, pleins d'allant.", bonus: "+2 DEX", trait: "Chanceux · Brave",
-    bonusStats: { DEX: 2 }, bonusLibres: 0 },
-  { id: "drakeide", nom: "Drakéide", desc: "Sang de dragon, souffle élémentaire.", bonus: "+2 FOR · +1 CHA", trait: "Arme de souffle · Résistance",
-    bonusStats: { FOR: 2, CHA: 1 }, bonusLibres: 0 },
-  { id: "gnome", nom: "Gnome", desc: "Petits inventeurs rusés et curieux.", bonus: "+2 INT", trait: "Vision dans le noir · Ruse gnome",
-    bonusStats: { INT: 2 }, bonusLibres: 0 },
-];
+const ORDRE_ESPECES = ["humain", "elfe", "nain", "orc", "tieffelin", "demi-elfe", "halfelin", "drakeide", "gnome"];
+
+const ESPECES = ORDRE_ESPECES.map((rid) => {
+  const r = Races.RACES[rid];
+  const libres = r.bonusLibres ? ` · +1 au choix ×${r.bonusLibres}` : "";
+  return {
+    id: r.id,
+    nom: r.nom,
+    desc: ESPECE_DESC[rid] ?? "",
+    bonus: fmtBonus(r.bonusStats) + libres,
+    // Deux premiers traits de la race, à titre d'aperçu.
+    trait: Races.traitsComplets(rid).slice(0, 2).map((t) => t.nom).join(" · "),
+    bonusStats: r.bonusStats,
+    bonusLibres: r.bonusLibres ?? 0,
+  };
+});
 
 const CLASSES = [
   { id: "guerrier", nom: "Guerrier", icon: Swords, de: 10, prim: "FOR / DEX", desc: "Maître des armes et des armures.", sauv: ["FOR", "CON"] },
@@ -107,7 +124,15 @@ const COMPETENCES = {
   CHA: ["Intimidation", "Persuasion", "Représentation", "Tromperie"],
 };
 
-const LANGUES = ["Commun", "Elfique", "Nain", "Orc", "Draconique", "Infernal", "Céleste", "Sylvestre"];
+/* Langues SRD 5.1. "Halfelin" et "Gnome" manquaient alors que les races
+   correspondantes les parlent : sans elles, l'auto-sélection des langues
+   raciales les perdait silencieusement. */
+const LANGUES = [
+  // Standard
+  "Commun", "Nain", "Elfique", "Gnome", "Halfelin", "Géant", "Gobelin", "Orc",
+  // Exotiques
+  "Abyssal", "Céleste", "Draconique", "Profond", "Infernal", "Primordial", "Sylvestre",
+];
 
 /* Point-buy D&D : coût par valeur (table "Ability Score Point Cost") */
 const COST = { 8: 0, 9: 1, 10: 2, 11: 3, 12: 4, 13: 5, 14: 7, 15: 9 };
@@ -205,7 +230,9 @@ export default function CharacterCreator() {
   const [sortsDispo, setSortsDispo] = useState([]);   // sorts niveau <=1 de la classe
   const [survol, setSurvol] = useState(null);         // { sort, x, y } tooltip de sort
   const [styleCombat, setStyleCombat] = useState(null); // Guerrier : id du style
-  const [equip, setEquip] = useState({ armure: "", arme: "", bouclier: false }); // Guerrier
+  const [equip, setEquip] = useState({ armure: "", arme: "", bouclier: false }); // toutes classes
+  const [choixRace, setChoixRace] = useState({});     // { [cle]: valeur|valeur[] } — cf. Races.choixRaciaux
+  const [sortsRace, setSortsRace] = useState([]);     // sorts mineurs raciaux disponibles (Haut-elfe)
   const selCss = { width: "100%", padding: "10px 12px", background: "#0f1116", border: "1px solid #2c313d", borderRadius: 8, color: "#e7e3d6", fontSize: 14 };
   const [langues, setLangues] = useState(["Commun"]);
   const [histoire, setHistoire] = useState({});
@@ -270,7 +297,108 @@ export default function CharacterCreator() {
     setId({ ...id, espece: e.id });
     setBonusChoisis([]); // reset des bonus libres quand l'espèce change
     setSousEspece(null);
+    setChoixRace({});    // les choix raciaux dépendent de l'espèce
   };
+
+  const choisirSousEspece = (srId) => {
+    setSousEspece(srId);
+    setChoixRace({});    // les choix de sous-race (outils, sort mineur…) changent
+  };
+
+  /* ── Spécificités raciales ──────────────────────────────────
+     Dérivées des fichiers de races : ancêtre draconique (Drakéide), outils
+     (Nain), sort mineur + langue (Haut-elfe), compétences + langue (Demi-elfe). */
+  const choixRaciaux = id.espece ? Races.choixRaciaux(id.espece, sousEspece) : [];
+  const maitrisesRace = id.espece ? Races.maitrisesRaciales(id.espece, sousEspece) : { armes: [], armures: [], competences: [], outils: [] };
+  const traitsRace = id.espece ? Races.traitsComplets(id.espece, sousEspece) : [];
+  const capLangues = 1 + (id.espece ? Races.languesRaciales(id.espece, sousEspece) : 0)
+    + ((Races.RACES[id.espece]?.langues?.length ?? 1) - 1);
+
+  const setChoix = (cle, valeur) => setChoixRace((p) => ({ ...p, [cle]: valeur }));
+  const toggleChoixMulti = (cle, valeur, max) => setChoixRace((p) => {
+    const cur = p[cle] ?? [];
+    if (cur.includes(valeur)) return { ...p, [cle]: cur.filter((v) => v !== valeur) };
+    if (cur.length >= max) return p;
+    return { ...p, [cle]: [...cur, valeur] };
+  });
+
+  /* Un choix racial est-il complet ? */
+  const choixRacialComplet = (c) => {
+    const v = choixRace[c.cle];
+    if (c.nature === "ancetre_draconique") return !!v;
+    if (c.nature === "competences") return true; // géré via le cap de l'onglet Compétences
+    if (c.nature === "langues") return true;     // géré via le cap des Langues
+    return Array.isArray(v) ? v.length >= (c.nombre ?? 1) : !!v;
+  };
+  const choixRaciauxIncomplets = choixRaciaux.filter((c) => !choixRacialComplet(c));
+
+  /* Sorts mineurs accordés par la race et choisis par le joueur (Haut-elfe).
+     Leur slug vient de la table `spells`, donc il est exact. On conserve la
+     caractéristique d'incantation : le sort racial du Haut-elfe se lance avec
+     l'INT même si sa classe lance avec le CHA ou la SAG. */
+  const sortsRaciauxChoisis = choixRaciaux
+    .filter((c) => c.nature === "sorts_mineurs")
+    .map((c) => ({ slug: choixRace[c.cle], caracteristique: c.caracteristique, source: c.label }))
+    .filter((s) => s.slug);
+
+  /* ── Équipement de départ : filtré par les maîtrises classe + race ──
+     Les groupes "simples"/"de_guerre" viennent de maitrises.armes ; les refs
+     explicites (Haut-elfe, Drow, Nain…) s'y ajoutent. Aucune donnée nouvelle :
+     tout vient des fichiers de classe, de races et des catalogues. */
+  const classeData = classeParNom(classe?.nom);
+
+  const armesAutorisees = () => {
+    if (!classeData) return [];
+    const m = classeData.maitrises?.armes ?? [];
+    const groupes = new Set(m.filter((x) => x === "simples" || x === "de_guerre"));
+    const refs = new Set([
+      ...m.filter((x) => x !== "simples" && x !== "de_guerre"),
+      ...maitrisesRace.armes,
+    ]);
+    return Object.values(ARMES).filter(
+      (w) => refs.has(w.ref)
+        || (groupes.has("simples") && w.categorie === "simple")
+        || (groupes.has("de_guerre") && w.categorie === "guerre")
+    );
+  };
+
+  const armuresAutorisees = () => {
+    if (!classeData) return [];
+    const cats = new Set([...(classeData.maitrises?.armures ?? []), ...maitrisesRace.armures]);
+    return Object.values(ARMURES).filter((a) => a.categorie !== "bouclier" && cats.has(a.categorie));
+  };
+
+  const bouclierAutorise = () => {
+    if (!classeData) return false;
+    return [...(classeData.maitrises?.armures ?? []), ...maitrisesRace.armures].includes("bouclier");
+  };
+
+  /* Le choix d'équipement doit rester valide quand la classe ou la race change. */
+  useEffect(() => {
+    const refsOk = new Set(armesAutorisees().map((w) => w.ref));
+    const catsOk = new Set(armuresAutorisees().map((a) => a.ref));
+    setEquip((p) => ({
+      armure: catsOk.has(p.armure) ? p.armure : "",
+      arme: refsOk.has(p.arme) ? p.arme : "",
+      bouclier: bouclierAutorise() ? p.bouclier : false,
+    }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [classe?.nom, id.espece, sousEspece]);
+
+  /* Haut-elfe : un sort mineur de la liste de magicien. Requête dédiée. */
+  useEffect(() => {
+    let annule = false;
+    const besoin = choixRaciaux.find((c) => c.nature === "sorts_mineurs");
+    if (!besoin) { setSortsRace([]); return; }
+    const classeSource = besoin.source === "magicien" ? "Magicien" : besoin.source;
+    supabase
+      .from("spells").select("slug, nom, niveau, ecole, description")
+      .contains("classes", [classeSource]).eq("niveau", 0)
+      .order("nom", { ascending: true })
+      .then(({ data }) => { if (!annule) setSortsRace(data || []); });
+    return () => { annule = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id.espece, sousEspece]);
 
   /* Bonus d'espèce réellement appliqués */
   const racialFixed = espece?.bonusStats || {};
@@ -278,9 +406,34 @@ export default function CharacterCreator() {
   const bonusDe = (sid) => (racialFixed[sid] || 0) + (bonusChoisis.includes(sid) ? 1 : 0);
   const valeurFinale = (sid) => (stats[sid] == null ? null : stats[sid] + bonusDe(sid));
 
-  /* Caps de sélection au niveau 1 (spécifiques classe/race) */
-  const capSkills = ({ barbare: 2, barde: 3, clerc: 2, druide: 2, ensorceleur: 2, guerrier: 2, mage: 2, moine: 2, occultiste: 2, paladin: 2, rodeur: 3, voleur: 4 })[id.classe] ?? 2;
+  /* Caps de sélection au niveau 1 (spécifiques classe/race)
+     capSkills lit désormais `competences.nombre` du fichier de classe (via le
+     nom canonique, donc valide aussi pour "mage"/"voleur"), plus les compétences
+     accordées au choix par la race (Polyvalence du Demi-elfe : +2). */
+  const capSkills = (classeData?.competences?.nombre ?? 2)
+    + (id.espece ? Races.competencesRaciales(id.espece, sousEspece) : 0);
+  /* Compétences accordées d'office par la race (Elfe → Perception, Demi-orc →
+     Intimidation). Elles ne consomment pas le cap : elles sont fusionnées à
+     l'enregistrement. Les ids des fichiers de races sont sans accent ; on les
+     rapproche des libellés de COMPETENCES par normalisation. */
+  const norm = (s) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const skillsOfferts = maitrisesRace.competences
+    .map((c) => Object.values(COMPETENCES).flat().find((lib) => norm(lib) === norm(c)))
+    .filter(Boolean);
   const capMineurs = ({ barde: 2, clerc: 3, druide: 2, ensorceleur: 4, mage: 3, occultiste: 2 })[id.classe] ?? 0;
+
+  /* Les langues accordées par l'espèce sont cochées d'office : elles font partie
+     du total (capLangues), le joueur ne dépense ses choix que sur le reste.
+     Les fichiers de races donnent "commun"/"elfique" ; LANGUES porte "Commun"/
+     "Elfique" — on les rapproche par normalisation, sans table de correspondance. */
+  useEffect(() => {
+    if (!id.espece) return;
+    const offertes = (Races.RACES[id.espece]?.langues ?? [])
+      .map((l) => LANGUES.find((lib) => norm(lib) === norm(l)))
+      .filter(Boolean);
+    setLangues((p) => Array.from(new Set([...offertes, ...p])));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id.espece, sousEspece]);
   const capNiveau1 =
     id.classe === "mage" ? 6
     : id.classe === "barde" ? 4
@@ -298,14 +451,69 @@ export default function CharacterCreator() {
   };
 
   /* Stats dérivées (niveau 1) — calculées sur les valeurs finales (— si non assignées) */
+  const NIVEAU_DEPART = 1;
   const finCon = valeurFinale("CON");
   const finDex = valeurFinale("DEX");
   const finSag = valeurFinale("SAG");
-  const pdv = (classe && finCon != null) ? classe.de + mod(finCon) : "—";
+
+  /* Bonus de PV max accordés par la race (Robustesse naine du Nain des collines :
+     +1 par niveau). Lu depuis les traits, pas codé en dur : toute race qui
+     déclarera `effet.type === "pv_max_bonus"` sera prise en compte sans y revenir. */
+  const pvBonusRace = traitsRace
+    .filter((t) => t.effet?.type === "pv_max_bonus")
+    .reduce((total, t) => {
+      const f = t.effet.formule;
+      if (f === "niveau_total") return total + NIVEAU_DEPART;
+      if (typeof t.effet.valeur === "number") return total + t.effet.valeur;
+      return total;
+    }, 0);
+  const pvBonusRaceLbl = traitsRace
+    .filter((t) => t.effet?.type === "pv_max_bonus")
+    .map((t) => t.nom);
+
+  const pdv = (classe && finCon != null) ? classe.de + mod(finCon) + pvBonusRace : "—";
   const ca = finDex != null ? 10 + mod(finDex) : "—";
   const init = finDex != null ? fmtMod(mod(finDex)) : "—";
   const perceptionP = finSag != null ? 10 + mod(finSag) : "—";
   const maitrise = fmtMod(bonusMaitrise(1));   // niveau 1 → +2 (table de progression)
+  /* Vitesse : lue depuis la race (Nain/Halfelin/Gnome 7,5 m ; Elfe des bois 10,5 m).
+     Elle était codée en dur à 9 m pour tout le monde. */
+  const vitesseRace = (id.espece ? Races.vitesse(id.espece, sousEspece) : null) ?? 9;
+
+  /* Sorts mineurs raciaux AUTOMATIQUES (Drow → lumières, Tieffelin →
+     thaumaturgie, Gnome des forêts → illusion mineure). Ils ne sont pas choisis.
+     Les fichiers de races portent des NOMS FR, pas des slugs : on les rapproche
+     des sorts mineurs de la base par nom normalisé. Un sort non résolu est
+     signalé dans l'UI plutôt qu'ignoré en silence. */
+  const [sortsAutoRace, setSortsAutoRace] = useState([]);   // [{ slug, nom, caracteristique }]
+  const [sortsAutoNonResolus, setSortsAutoNonResolus] = useState([]);
+
+  useEffect(() => {
+    let annule = false;
+    const attendus = (id.espece ? Races.sortsRaciaux(id.espece, sousEspece, NIVEAU_DEPART) : [])
+      .filter((s) => s.usage === "a_volonte");
+    if (!attendus.length) { setSortsAutoRace([]); setSortsAutoNonResolus([]); return; }
+    const carac = Object.values(Races.RACES[id.espece]?.traits ?? {})
+      .concat(Object.values(Races.RACES[id.espece]?.sousRaces?.[sousEspece]?.traits ?? {}))
+      .find((t) => t.effet?.type === "sorts_raciaux")?.effet?.caracteristique ?? null;
+    supabase
+      .from("spells").select("slug, nom").eq("niveau", 0)
+      .then(({ data }) => {
+        if (annule) return;
+        const cantrips = data || [];
+        const resolus = [];
+        const rates = [];
+        for (const a of attendus) {
+          const hit = cantrips.find((c) => norm(c.nom) === norm(a.sort));
+          if (hit) resolus.push({ slug: hit.slug, nom: hit.nom, caracteristique: carac });
+          else rates.push(a.sort);
+        }
+        setSortsAutoRace(resolus);
+        setSortsAutoNonResolus(rates);
+      });
+    return () => { annule = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id.espece, sousEspece]);
 
   /* Génération assistée — appel réel à l'API via l'edge function */
   const genererHistoire = async () => {
@@ -340,6 +548,16 @@ export default function CharacterCreator() {
       setTab("identite");
       return;
     }
+    if (Races.RACES[id.espece]?.sousRaceRequise && !sousEspece) {
+      setForgeErreur("Choisis une sous-race : elle apporte ses propres bonus et traits.");
+      setTab("identite");
+      return;
+    }
+    if (choixRaciauxIncomplets.length) {
+      setForgeErreur(`Choix racial à compléter : ${choixRaciauxIncomplets.map((c) => c.label).join(", ")}.`);
+      setTab("identite");
+      return;
+    }
     if (["FOR", "DEX", "CON", "INT", "SAG", "CHA"].some((k) => stats[k] == null)) {
       setForgeErreur("Assigne une valeur à chaque caractéristique.");
       setTab("attributs");
@@ -351,9 +569,30 @@ export default function CharacterCreator() {
       const ficheBase = {
         alignement: id.alignement,
         apparence: app,
-        sousEspece: SUB_RACES[espece?.id]?.includes(sousEspece) ? sousEspece : null,
-        sorts: sortsConnus,
-        competences: skills,
+        // Sous-race désormais stockée par id ("haut_elfe"), plus par libellé.
+        sousEspece: (SUB_RACES[espece?.id] ?? []).some((sr) => sr.id === sousEspece) ? sousEspece : null,
+        // Bloc racial : tout ce qui a été choisi, plus ce que la race dérive.
+        race: {
+          id: espece?.id ?? null,
+          sousRace: sousEspece,
+          choix: choixRace,                       // ancêtre draconique, outils, sort mineur…
+          bonusLibres: bonusChoisis,
+          vitesse: espece?.id ? Races.vitesse(espece.id, sousEspece) : null,
+          maitrises: maitrisesRace,
+          traits: traitsRace.map((t) => ({ id: t.id, nom: t.nom, origine: t.origine })),
+          // Sorts mineurs raciaux : conservés à part car ils se lancent avec la
+          // caractéristique de la race (INT pour le Haut-elfe), pas celle de la classe.
+          sortsMineurs: [...sortsRaciauxChoisis, ...sortsAutoRace],
+        },
+        // Sorts connus = choix de classe + sorts mineurs raciaux (choisis et
+        // automatiques). Ces derniers ne consomment pas le quota de la classe.
+        sorts: Array.from(new Set([
+          ...sortsConnus,
+          ...sortsRaciauxChoisis.map((s) => s.slug),
+          ...sortsAutoRace.map((s) => s.slug),
+        ])),
+        // Les compétences offertes par la race rejoignent les compétences choisies.
+        competences: Array.from(new Set([...skills, ...skillsOfferts])),
         langues,
         histoire,
         personnalite: perso,
@@ -388,20 +627,19 @@ export default function CharacterCreator() {
       // Paquetage de l'aventurier + bourse de départ (classe + historique).
       await equiperPaquetageDepart(nouveau.id, { classe: classe?.nom, historique: id.historique });
 
-      // Guerrier : arme/armure/bouclier choisis → inventaire + équipés (recompose mecanique).
-      if (classe?.id === "guerrier") {
-        if (equip.armure) {
-          const a = await ajouter(nouveau.id, { categorie: "armure", ref: equip.armure, nom: ARMURES[equip.armure]?.nom || equip.armure });
-          await equiper(nouveau.id, a.id, "armure");
-        }
-        if (equip.bouclier) {
-          const b = await ajouter(nouveau.id, { categorie: "armure", ref: "bouclier", nom: "Bouclier" });
-          await equiper(nouveau.id, b.id, "bouclier");
-        }
-        if (equip.arme) {
-          const w = await ajouter(nouveau.id, { categorie: "arme", ref: equip.arme, nom: ARMES[equip.arme]?.nom || equip.arme });
-          await equiper(nouveau.id, w.id, "main");
-        }
+      // Arme/armure/bouclier choisis → inventaire + équipés (recompose mecanique).
+      // Ouvert à toutes les classes : le filtrage a déjà garanti la légalité du choix.
+      if (equip.armure) {
+        const a = await ajouter(nouveau.id, { categorie: "armure", ref: equip.armure, nom: ARMURES[equip.armure]?.nom || equip.armure });
+        await equiper(nouveau.id, a.id, "armure");
+      }
+      if (equip.bouclier) {
+        const b = await ajouter(nouveau.id, { categorie: "armure", ref: "bouclier", nom: ARMURES.bouclier?.nom || "Bouclier" });
+        await equiper(nouveau.id, b.id, "bouclier");
+      }
+      if (equip.arme) {
+        const w = await ajouter(nouveau.id, { categorie: "arme", ref: equip.arme, nom: ARMES[equip.arme]?.nom || equip.arme });
+        await equiper(nouveau.id, w.id, "main");
       }
       navigate("/personnages");
     } catch (e) {
@@ -461,11 +699,128 @@ export default function CharacterCreator() {
                 <Field label="Sous-race">
                   <div style={S.tagRow}>
                     {SUB_RACES[id.espece].map((sr) => (
-                      <button key={sr} onClick={() => setSousEspece(sr)}
-                        style={{ ...S.tag, ...(sousEspece === sr ? S.tagOn : {}) }}>
-                        {sousEspece === sr && <span style={S.dot} />}{sr}
+                      <button key={sr.id} onClick={() => choisirSousEspece(sr.id)}
+                        style={{ ...S.tag, ...(sousEspece === sr.id ? S.tagOn : {}) }}>
+                        {sousEspece === sr.id && <span style={S.dot} />}{sr.nom}
                       </button>
                     ))}
+                  </div>
+                </Field>
+              )}
+
+              {/* ── Spécificités raciales ──
+                  Entièrement dérivé des fichiers de races : rien n'est codé en dur
+                  ici. Une race sans choix n'affiche que ses traits. */}
+              {id.espece && (
+                <Field label="Spécificités raciales">
+                  <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                    {traitsRace.length > 0 && (
+                      <div style={S.tagRow}>
+                        {traitsRace.map((t) => (
+                          <span key={`${t.origine}:${t.id}`} title={t.description}
+                            style={{ ...S.tag, cursor: "help", borderColor: t.origine === "sous_race" ? C.violetDim : C.border }}>
+                            {t.nom}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+
+                    {Races.RACES[id.espece]?.sousRaceRequise && !sousEspece && (
+                      <p style={{ ...S.help, color: C.gold, margin: 0 }}>
+                        Choisis une sous-race : elle apporte ses propres bonus et traits.
+                      </p>
+                    )}
+
+                    {sortsAutoRace.length > 0 && (
+                      <p style={{ ...S.help, margin: 0 }}>
+                        Sort(s) mineur(s) accordé(s) d'office : <b style={{ color: C.gold }}>{sortsAutoRace.map((s) => s.nom).join(" · ")}</b>
+                        {sortsAutoRace[0]?.caracteristique ? ` (${sortsAutoRace[0].caracteristique})` : ""} — ajouté(s) à tes sorts, sans consommer ton quota de classe.
+                      </p>
+                    )}
+
+                    {sortsAutoNonResolus.length > 0 && (
+                      <p style={{ ...S.help, margin: 0, color: C.red }}>
+                        Introuvable(s) dans la base de sorts : <b>{sortsAutoNonResolus.join(" · ")}</b>. Ce sort racial ne sera pas ajouté à ta fiche.
+                      </p>
+                    )}
+
+                    {choixRaciaux.map((c) => {
+                      if (c.nature === "ancetre_draconique") {
+                        return (
+                          <div key={c.cle}>
+                            <div style={S.skillGroupTitle}>{c.label}</div>
+                            <div style={S.tagRow}>
+                              {c.options.map((o) => (
+                                <button key={o.id} onClick={() => setChoix(c.cle, o.id)}
+                                  title={o.detail}
+                                  style={{ ...S.tag, ...(choixRace[c.cle] === o.id ? S.tagOn : {}) }}>
+                                  {choixRace[c.cle] === o.id && <span style={S.dot} />}{o.nom}
+                                </button>
+                              ))}
+                            </div>
+                            {choixRace[c.cle] && (
+                              <p style={{ ...S.help, margin: "6px 0 0" }}>
+                                Souffle : {c.options.find((o) => o.id === choixRace[c.cle])?.detail} · résistance au même type.
+                              </p>
+                            )}
+                          </div>
+                        );
+                      }
+                      if (c.nature === "outils") {
+                        const sel = choixRace[c.cle] ?? [];
+                        return (
+                          <div key={c.cle}>
+                            <div style={S.skillGroupTitle}>{c.label} ({sel.length}/{c.nombre})</div>
+                            <div style={S.tagRow}>
+                              {c.options.map((o) => (
+                                <button key={o.id} onClick={() => toggleChoixMulti(c.cle, o.id, c.nombre)}
+                                  style={{ ...S.tag, ...(sel.includes(o.id) ? S.tagOn : {}), opacity: !sel.includes(o.id) && sel.length >= c.nombre ? 0.4 : 1 }}>
+                                  {sel.includes(o.id) && <span style={S.dot} />}{o.nom}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      }
+                      if (c.nature === "sorts_mineurs") {
+                        return (
+                          <div key={c.cle}>
+                            <div style={S.skillGroupTitle}>
+                              {c.label} — liste de {c.source}{c.caracteristique ? ` (${c.caracteristique})` : ""}
+                            </div>
+                            {sortsRace.length === 0
+                              ? <p style={{ ...S.help, margin: 0 }}>Chargement des sorts mineurs…</p>
+                              : (
+                                <div style={S.tagRow}>
+                                  {sortsRace.map((s) => (
+                                    <button key={s.slug} onClick={() => setChoix(c.cle, s.slug)}
+                                      onMouseEnter={(e) => setSurvol({ sort: s, x: e.clientX, y: e.clientY })}
+                                      onMouseLeave={() => setSurvol(null)}
+                                      style={{ ...S.tag, ...(choixRace[c.cle] === s.slug ? S.tagOn : {}) }}>
+                                      {choixRace[c.cle] === s.slug && <span style={S.dot} />}{s.nom}
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+                          </div>
+                        );
+                      }
+                      if (c.nature === "competences") {
+                        return (
+                          <p key={c.cle} style={{ ...S.help, margin: 0 }}>
+                            <b style={{ color: C.gold }}>{c.label}</b> : +{c.nombre} compétences au choix — à prendre dans l'onglet Compétences (le total est déjà relevé).
+                          </p>
+                        );
+                      }
+                      if (c.nature === "langues") {
+                        return (
+                          <p key={c.cle} style={{ ...S.help, margin: 0 }}>
+                            <b style={{ color: C.gold }}>{c.label}</b> : +{c.nombre} langue au choix — à prendre dans l'onglet Compétences.
+                          </p>
+                        );
+                      }
+                      return null;
+                    })}
                   </div>
                 </Field>
               )}
@@ -616,10 +971,15 @@ export default function CharacterCreator() {
               })}
 
               <div style={S.derived}>
-                <Derived icon={<Heart size={16} />} label="Points de vie" value={pdv} />
+                <Derived icon={<Heart size={16} />} label="Points de vie" value={pdv}
+                  hint={classe && finCon != null
+                    ? `d${classe.de} (${classe.de}) ${fmtMod(mod(finCon))} CON`
+                      + (pvBonusRace ? ` +${pvBonusRace} (${pvBonusRaceLbl.join(", ")})` : "")
+                    : undefined} />
                 <Derived icon={<Shield size={16} />} label="Classe d'armure" value={ca} />
                 <Derived icon={<Zap size={16} />} label="Initiative" value={init} />
-                <Derived icon={<Footprints size={16} />} label="Vitesse" value="9 m" />
+                <Derived icon={<Footprints size={16} />} label="Vitesse" value={`${vitesseRace} m`}
+                  hint={id.espece ? `Vitesse de ${espece?.nom}${sousEspece ? ` (${SUB_RACES[id.espece]?.find((s) => s.id === sousEspece)?.nom})` : ""}` : undefined} />
                 <Derived icon={<Eye size={16} />} label="Perception pass." value={perceptionP} />
                 <Derived icon={<Star size={16} />} label="Maîtrise" value={maitrise} />
               </div>
@@ -634,6 +994,11 @@ export default function CharacterCreator() {
               </p>
 
               <Field label={`Compétences maîtrisées (${skills.length}/${capSkills})`}>
+                {skillsOfferts.length > 0 && (
+                  <p style={{ ...S.help, marginTop: 0 }}>
+                    Accordée(s) d'office par ton espèce : <b style={{ color: C.gold }}>{skillsOfferts.join(" · ")}</b> — elles ne consomment pas ton quota.
+                  </p>
+                )}
                 <div style={S.skillWrap}>
                   {STATS.filter((s) => COMPETENCES[s.id].length).map((s) => (
                     <div key={s.id} style={S.skillGroup}>
@@ -697,35 +1062,67 @@ export default function CharacterCreator() {
                 </Field>
               )}
 
-              {classe?.id === "guerrier" && (
+              {classeData && (
                 <Field label="Équipement de départ">
+                  <p style={{ ...S.help, marginTop: 0 }}>
+                    Filtré par les maîtrises du {classeData.nom}
+                    {maitrisesRace.armes.length || maitrisesRace.armures.length
+                      ? <> et de ton espèce (<b style={{ color: C.gold }}>{[...maitrisesRace.armures, ...maitrisesRace.armes].length} maîtrise(s) raciale(s)</b>)</>
+                      : null}.
+                  </p>
                   <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                    <select value={equip.armure} onChange={(e) => setEquip({ ...equip, armure: e.target.value })} style={selCss}>
-                      <option value="">Sans armure</option>
-                      {Object.values(ARMURES).map((a) => (
-                        <option key={a.ref} value={a.ref}>{a.nom} — CA {a.ca} ({a.categorie})</option>
-                      ))}
-                    </select>
+                    {armuresAutorisees().length > 0 ? (
+                      <select value={equip.armure} onChange={(e) => setEquip({ ...equip, armure: e.target.value })} style={selCss}>
+                        <option value="">Sans armure</option>
+                        {armuresAutorisees().map((a) => (
+                          <option key={a.ref} value={a.ref}>{a.nom} — CA {a.ca} ({a.categorie})</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <p style={{ ...S.help, margin: 0 }}>
+                        Le {classeData.nom} ne maîtrise aucune armure — combat sans armure.
+                      </p>
+                    )}
+
                     <select value={equip.arme} onChange={(e) => setEquip({ ...equip, arme: e.target.value })} style={selCss}>
                       <option value="">À mains nues</option>
-                      {Object.values(ARMES).map((w) => (
-                        <option key={w.ref} value={w.ref}>{w.nom} — {w.dm} {w.typeDegats}</option>
+                      {armesAutorisees().map((w) => (
+                        <option key={w.ref} value={w.ref}>{w.nom} — {w.dm} {w.typeDegats} ({w.categorie})</option>
                       ))}
                     </select>
-                    <button onClick={() => setEquip({ ...equip, bouclier: !equip.bouclier })}
-                      style={{ ...S.tag, ...(equip.bouclier ? S.tagOn : {}), alignSelf: "flex-start" }}>
-                      {equip.bouclier && <span style={S.dot} />}Bouclier (+2 CA)
-                    </button>
+
+                    {bouclierAutorise() && (
+                      <button onClick={() => setEquip({ ...equip, bouclier: !equip.bouclier })}
+                        style={{ ...S.tag, ...(equip.bouclier ? S.tagOn : {}), alignSelf: "flex-start" }}>
+                        {equip.bouclier && <span style={S.dot} />}Bouclier (+2 CA)
+                      </button>
+                    )}
                   </div>
                 </Field>
               )}
 
-              <Field label="Langues">
+              <Field label={`Langues (${langues.length}/${capLangues})`}>
+                {id.espece && (
+                  <p style={{ ...S.help, marginTop: 0 }}>
+                    Accordées par l'espèce : <b style={{ color: C.gold }}>
+                      {(Races.RACES[id.espece]?.langues ?? []).map((l) => l.replace(/^./, (c) => c.toUpperCase())).join(" · ")}
+                    </b>
+                    {Races.languesRaciales(id.espece, sousEspece) > 0
+                      ? <> · +{Races.languesRaciales(id.espece, sousEspece)} au choix</>
+                      : null}
+                  </p>
+                )}
                 <div style={S.tagRow}>
-                  {LANGUES.map((l) => (
-                    <button key={l} onClick={() => toggle(langues, setLangues, l)}
-                      style={{ ...S.tag, ...(langues.includes(l) ? S.tagOn : {}) }}>{l}</button>
-                  ))}
+                  {LANGUES.map((l) => {
+                    const sel = langues.includes(l);
+                    const bloque = !sel && langues.length >= capLangues;
+                    return (
+                      <button key={l} onClick={() => toggle(langues, setLangues, l, capLangues)}
+                        style={{ ...S.tag, ...(sel ? S.tagOn : {}), opacity: bloque ? 0.4 : 1 }}>
+                        {sel && <span style={S.dot} />}{l}
+                      </button>
+                    );
+                  })}
                 </div>
               </Field>
             </div>
@@ -906,9 +1303,9 @@ function ColorInput({ value, onChange }) {
   return <input type="color" value={value} onChange={(e) => onChange(e.target.value)} style={S.color} />;
 }
 
-function Derived({ icon, label, value }) {
+function Derived({ icon, label, value, hint }) {
   return (
-    <div style={S.derivedCell}>
+    <div style={S.derivedCell} title={hint || undefined}>
       <span style={S.derivedIcon}>{icon}</span>
       <span style={S.derivedVal}>{value}</span>
       <span style={S.derivedLbl}>{label}</span>

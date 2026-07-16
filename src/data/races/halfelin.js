@@ -89,7 +89,6 @@ export const HALFELIN = {
   ageMaturite: 20,
   ageMax: 150,
   langues: ["commun", "halfelin"],
-  languesAuChoix: 0,
   traits: TRAITS,
   sousRaces: SOUS_RACES,
   sousRaceRequise: true,

@@ -66,7 +66,6 @@ export const DEMI_ORC = {
   ageMaturite: 14,
   ageMax: 75,
   langues: ["commun", "orc"],
-  languesAuChoix: 0,
   traits: TRAITS,
   sousRaces: SOUS_RACES,
   sousRaceRequise: false,

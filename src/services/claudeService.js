@@ -3,6 +3,7 @@
 
 import { supabase } from '../lib/supabase'
 import { etatMecanique, modCarac, signe } from "./guerrierService.js";
+import * as Races from "../data/races/index.js";
 
 /* ════════════════════════════════════════════════════════════
    BLOCS DYNAMIQUES DU SYSTEM PROMPT
@@ -107,8 +108,60 @@ Capacités : ${caps}`;
 
   bloc += `
 Historique : ${p.historique ?? "—"}`;
+  bloc += buildBlocRace(p);
   return bloc;
 }
+
+/* --- Sous-bloc : l'espèce, ses traits, et ce qu'elle permet mécaniquement ---
+   Le MJ ne recevait que le NOM de l'espèce : il ignorait qu'un Drakéide a un
+   souffle, qu'un Nain voit dans le noir ou qu'un Halfelin relance ses 1.
+   Tout est lu depuis fiche.race (écrit par le créateur) et les fichiers de races.
+   Les personnages créés avant fiche.race ne produisent rien : pas de régression. */
+export function buildBlocRace(p) {
+  const r = p?.fiche?.race;
+  if (!r?.id || !Races.RACES[r.id]) return "";
+
+  const lignes = [];
+  const traits = (r.traits ?? []).map((t) => t.nom).filter(Boolean);
+  if (traits.length) lignes.push(`Traits d'espèce : ${traits.join(", ")}`);
+  if (r.vitesse) lignes.push(`Vitesse : ${r.vitesse} m`);
+
+  // Souffle (Drakéide). DD et dés dépendent du niveau et de la Constitution.
+  const s = Races.souffle(r.id, r.choix?.ancetre_draconique, p.niveau ?? 1);
+  if (s) {
+    const dd = 8 + modCarac(p.constitution) + PB(p.niveau ?? 1);
+    const forme = s.forme.type === "cone"
+      ? `cône de ${s.forme.longueur} m`
+      : `ligne de ${s.forme.longueur} m sur ${s.forme.largeur} m`;
+    const anc = Races.nomAncetre(r.id, r.choix.ancetre_draconique) ?? "—";
+    const etat = ressourceActuelle(p, "souffle");
+    lignes.push(
+      `Arme de souffle (ancêtre ${anc}) : action, ${forme}, ${s.des} dégâts de ${s.degats}, `
+      + `sauvegarde de ${s.sauvegarde} DD ${dd} (moitié des dégâts si réussie). `
+      + `Utilisations : ${etat} — recharge à un repos court ou long. `
+      + `Résistance permanente aux dégâts de ${s.degats}.`
+    );
+  }
+
+  // Sorts mineurs raciaux : ils se lancent avec la caractéristique de l'ESPÈCE.
+  for (const sm of r.sortsMineurs ?? []) {
+    if (sm?.nom || sm?.slug) {
+      lignes.push(`Sort mineur d'espèce : ${sm.nom ?? sm.slug}${sm.caracteristique ? ` (incantation avec ${sm.caracteristique})` : ""}`);
+    }
+  }
+
+  return lignes.length ? `\n${lignes.join("\n")}` : "";
+}
+
+/* Utilisations restantes d'une ressource nommée, sous la forme "actuel/max".
+   Lecture directe de la fiche (défaut = max) : on évite d'importer
+   ressourceService ici, qui dépend de supabase. */
+function ressourceActuelle(p, cle, max = 1) {
+  const actuel = p?.fiche?.mecanique?.ressources?.classe?.[cle] ?? max;
+  return `${Math.max(0, Math.min(max, actuel))}/${max}`;
+}
+
+const PB = (n) => [2,2,2,2,3,3,3,3,4,4,4,4,5,5,5,5,6,6,6,6][Math.min(20, Math.max(1, n || 1)) - 1];
 
 // --- Bloc (3) : contexte de la session ---
 export function buildBlocSession(session = {}) {
@@ -219,7 +272,7 @@ export function buildBlocTags() {
 - [OBJET:ajouter|nom|quantite|description] : butin gagné.
 - [OR:po|pa|pc] : gain/perte de pièces (deltas signés, ex. [OR:50] ou [OR:-10]).
 - [SORT:niveau] : le personnage lance un sort → consomme un emplacement de ce niveau (ex. [SORT:1]). Pour un occultiste, n'importe quel niveau consomme un emplacement de pacte.
-- [RESSOURCE:cle|n] : dépense une ressource de classe (ex. [RESSOURCE:ki|2], [RESSOURCE:rage|1], [RESSOURCE:second_souffle|1]).
+- [RESSOURCE:cle|n] : dépense une ressource de classe ou d'espèce (ex. [RESSOURCE:ki|2], [RESSOURCE:rage|1], [RESSOURCE:second_souffle|1]). Ressources d'espèce : [RESSOURCE:souffle|1] pour l'arme de souffle du Drakéide, [RESSOURCE:endurance_implacable|1] pour le Demi-orc. N'utilise que les clés listées dans le bloc [PERSONNAGE DU JOUEUR].
 - [CONDITION:add|cle] / [CONDITION:remove|cle] : état (empoisonné, à terre, etc.).
 - [REPOS:court] / [REPOS:long] : récupération.
 - [QUETE:creer|type|titre|description], [QUETE:indice|titre|texte], [QUETE:accomplir|titre], [QUETE:echouer|titre].

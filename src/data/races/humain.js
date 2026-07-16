@@ -59,7 +59,6 @@ export const HUMAIN = {
   ageMaturite: 18,
   ageMax: 100,
   langues: ["commun"],
-  languesAuChoix: 1,
   traits: TRAITS,
   sousRaces: SOUS_RACES,
   sousRaceRequise: false,

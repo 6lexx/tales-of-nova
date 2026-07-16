@@ -181,7 +181,6 @@ export const ELFE = {
   ageMaturite: 100,
   ageMax: 750,
   langues: ["commun", "elfique"],
-  languesAuChoix: 0, // le Haut-elfe en gagne une via sa sous-race
   traits: TRAITS,
   sousRaces: SOUS_RACES,
   sousRaceRequise: true,

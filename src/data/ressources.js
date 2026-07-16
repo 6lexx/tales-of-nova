@@ -66,3 +66,14 @@ export const RESSOURCES_CLASSE = {
 };
 
 export const _helpers = { mod, PB };
+
+/* Ressources accordées par l'ESPÈCE, même contrat que RESSOURCES_CLASSE :
+   (perso) => [{ cle, label, max, recharge }].
+   Clé = nom d'espèce tel que stocké dans `characters.espece` (= `espece?.nom`
+   du créateur), par symétrie avec RESSOURCES_CLASSE qui est clé par nom de classe.
+   Seules deux espèces SRD ont une ressource ; la table reste volontairement
+   minuscule plutôt que de préfigurer des cas qui n'existent pas. */
+export const RESSOURCES_RACE = {
+  'Drakéide': () => [{ cle: 'souffle', label: 'Arme de souffle', max: 1, recharge: 'court' }],
+  'Demi-orc': () => [{ cle: 'endurance_implacable', label: 'Endurance implacable', max: 1, recharge: 'long' }],
+};

@@ -73,7 +73,6 @@ export const DEMI_ELFE = {
   ageMaturite: 20,
   ageMax: 180,
   langues: ["commun", "elfique"],
-  languesAuChoix: 1,
   traits: TRAITS,
   sousRaces: SOUS_RACES,
   sousRaceRequise: false,

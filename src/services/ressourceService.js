@@ -4,7 +4,7 @@
 
 import { supabase } from '../lib/supabase';
 import {
-  EMPLACEMENTS_COMPLET, EMPLACEMENTS_DEMI, EMPLACEMENTS_PACTE, TYPE_LANCEUR, RESSOURCES_CLASSE,
+  EMPLACEMENTS_COMPLET, EMPLACEMENTS_DEMI, EMPLACEMENTS_PACTE, TYPE_LANCEUR, RESSOURCES_CLASSE, RESSOURCES_RACE,
 } from '../data/ressources';
 
 const NORM = { Mage: 'Magicien', Voleur: 'Roublard' };
@@ -33,6 +33,25 @@ function ressourcesClasseMax(perso) {
   return fn ? fn(perso) : [];
 }
 
+// Ressources accordées par l'espèce (Drakéide → souffle, Demi-orc → endurance
+// implacable). Elles rejoignent volontairement le MÊME tableau que les ressources
+// de classe : les clés sont uniques, et `repos`, la sérialisation, les tags
+// [RESSOURCE:cle|n] et le panneau les traitent alors sans aucune modification.
+function ressourcesRaceMax(perso) {
+  const fn = RESSOURCES_RACE[perso?.espece];
+  return fn ? fn(perso) : [];
+}
+
+// Ressources nommées = classe + espèce. Stockées sous fiche.mecanique.ressources.classe
+// (la clé de stockage garde son nom historique : la renommer casserait les fiches
+// existantes pour un gain cosmétique).
+function ressourcesNommeesMax(perso) {
+  const classe = ressourcesClasseMax(perso);
+  const cles = new Set(classe.map((r) => r.cle));
+  const race = ressourcesRaceMax(perso).filter((r) => !cles.has(r.cle));
+  return [...classe, ...race];
+}
+
 // Snapshot complet : max recalculés + actuel lu depuis fiche (défaut = max).
 export function etatRessources(perso) {
   const stock = perso?.fiche?.mecanique?.ressources ?? {};
@@ -47,7 +66,7 @@ export function etatRessources(perso) {
       emplacements[k] = { max, actuel: clamp(actuel, max) };
     }
   }
-  const classe = ressourcesClasseMax(perso).map((r) => ({
+  const classe = ressourcesNommeesMax(perso).map((r) => ({
     ...r,
     actuel: clamp(stock.classe?.[r.cle] ?? r.max, r.max),
   }));

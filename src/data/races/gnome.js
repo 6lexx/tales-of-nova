@@ -112,7 +112,6 @@ export const GNOME = {
   ageMaturite: 40,
   ageMax: 500,
   langues: ["commun", "gnome"],
-  languesAuChoix: 0,
   traits: TRAITS,
   sousRaces: SOUS_RACES,
   sousRaceRequise: true,
