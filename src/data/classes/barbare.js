@@ -268,7 +268,7 @@ export const BARBARE = {
   caracteristiquesPrincipales: ["force"],
   sauvegardes: ["force", "constitution"],
   maitrises: {
-    armures: ["legeres", "intermediaires", "boucliers"],
+    armures: ["legere", "intermediaire", "bouclier"],
     armes: ["simples", "de_guerre"],
     outils: [],
   },

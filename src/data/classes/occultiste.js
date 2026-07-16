@@ -453,7 +453,7 @@ export const OCCULTISTE = {
   caracteristiquesPrincipales: ["charisme"],
   sauvegardes: ["sagesse", "charisme"],
   maitrises: {
-    armures: ["legeres"],
+    armures: ["legere"],
     armes: ["simples"],
     outils: [],
   },

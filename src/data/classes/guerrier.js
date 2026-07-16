@@ -237,7 +237,7 @@ export const GUERRIER = {
   caracteristiquesPrincipales: ["force", "dexterite"],
   sauvegardes: ["force", "constitution"],
   maitrises: {
-    armures: ["legeres", "intermediaires", "lourdes", "boucliers"],
+    armures: ["legere", "intermediaire", "lourde", "bouclier"],
     armes: ["simples", "de_guerre"],
     outils: [],
   },

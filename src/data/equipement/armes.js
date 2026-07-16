@@ -20,8 +20,13 @@ export const ARMES = {
   masse_armes:      { ref: "masse_armes",      nom: "Masse d'armes",      categorie: "simple", portee: "corps_a_corps", dm: "1d6",  typeDegats: "contondant" },
   baton:            { ref: "baton",            nom: "Bâton",              categorie: "simple", portee: "corps_a_corps", dm: "1d6",  typeDegats: "contondant", proprietes: { polyvalente: "1d8" } },
   epieu:            { ref: "epieu",            nom: "Épieu",              categorie: "simple", portee: "corps_a_corps", dm: "1d6",  typeDegats: "perforant",  proprietes: { polyvalente: "1d8", lancer: [6, 18] } },
+  gourdin:          { ref: "gourdin",          nom: "Gourdin",            categorie: "simple", portee: "corps_a_corps", dm: "1d4",  typeDegats: "contondant", proprietes: { legere: true } },
+  marteau_leger:    { ref: "marteau_leger",    nom: "Marteau léger",      categorie: "simple", portee: "corps_a_corps", dm: "1d4",  typeDegats: "contondant", proprietes: { legere: true, lancer: [6, 18] } },
+  serpe:            { ref: "serpe",            nom: "Serpe",              categorie: "simple", portee: "corps_a_corps", dm: "1d4",  typeDegats: "tranchant",  proprietes: { legere: true } },
   arbalete_legere:  { ref: "arbalete_legere",  nom: "Arbalète légère",    categorie: "simple", portee: "distance",       dm: "1d8",  typeDegats: "perforant",  proprietes: { deuxMains: true, chargement: true, munitions: [24, 96] } },
   arc_court:        { ref: "arc_court",        nom: "Arc court",          categorie: "simple", portee: "distance",       dm: "1d6",  typeDegats: "perforant",  proprietes: { deuxMains: true, munitions: [24, 96] } },
+  flechette:        { ref: "flechette",        nom: "Fléchette",          categorie: "simple", portee: "distance",       dm: "1d4",  typeDegats: "perforant",  proprietes: { finesse: true, lancer: [6, 18] } },
+  fronde:           { ref: "fronde",           nom: "Fronde",             categorie: "simple", portee: "distance",       dm: "1d4",  typeDegats: "contondant", proprietes: { munitions: [9, 36] } },
 
   // --- Armes de guerre (mêlée) --------------------------------------------
   hache_armes:      { ref: "hache_armes",      nom: "Hache d'armes",      categorie: "guerre", portee: "corps_a_corps", dm: "1d8",  typeDegats: "tranchant",  proprietes: { polyvalente: "1d10" } },

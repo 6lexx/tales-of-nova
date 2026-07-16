@@ -328,7 +328,7 @@ export const PALADIN = {
   caracteristiquesPrincipales: ["force", "charisme"],
   sauvegardes: ["sagesse", "charisme"],
   maitrises: {
-    armures: ["legeres", "intermediaires", "lourdes", "boucliers"],
+    armures: ["legere", "intermediaire", "lourde", "bouclier"],
     armes: ["simples", "de_guerre"],
     outils: [],
   },

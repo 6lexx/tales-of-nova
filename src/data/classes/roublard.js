@@ -244,8 +244,8 @@ export const ROUBLARD = {
   caracteristiquesPrincipales: ["dexterite"],
   sauvegardes: ["dexterite", "intelligence"],
   maitrises: {
-    armures: ["legeres"],
-    armes: ["simples", "arbalete_de_poing", "epee_longue", "rapiere", "epee_courte"],
+    armures: ["legere"],
+    armes: ["simples", "arbalete_poing", "epee_longue", "rapiere", "epee_courte"],
     outils: ["outils_de_voleur"],
   },
   competences: {

@@ -317,8 +317,8 @@ export const DRUIDE = {
   sauvegardes: ["intelligence", "sagesse"],
   maitrises: {
     // Les druides ne portent ni armure ni bouclier en métal (interdit de tradition).
-    armures: ["legeres", "intermediaires", "boucliers"],
-    armes: ["baton", "dague", "flechette", "javeline", "masse_d_armes", "gourdin", "cimeterre", "serpe", "fronde", "lance"],
+    armures: ["legere", "intermediaire", "bouclier"],
+    armes: ["baton", "dague", "flechette", "javeline", "masse_armes", "gourdin", "cimeterre", "serpe", "fronde", "epieu"],
     outils: ["kit_d_herboriste"],
   },
   competences: {

@@ -340,7 +340,7 @@ export const RODEUR = {
   caracteristiquesPrincipales: ["dexterite", "sagesse"],
   sauvegardes: ["force", "dexterite"],
   maitrises: {
-    armures: ["legeres", "intermediaires", "boucliers"],
+    armures: ["legere", "intermediaire", "bouclier"],
     armes: ["simples", "de_guerre"],
     outils: [],
   },

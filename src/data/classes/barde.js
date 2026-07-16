@@ -250,8 +250,8 @@ export const BARDE = {
   caracteristiquesPrincipales: ["charisme"],
   sauvegardes: ["dexterite", "charisme"],
   maitrises: {
-    armures: ["legeres"],
-    armes: ["simples", "arbalete_de_poing", "epee_longue", "rapiere", "epee_courte"],
+    armures: ["legere"],
+    armes: ["simples", "arbalete_poing", "epee_longue", "rapiere", "epee_courte"],
     outils: ["trois_instruments_de_musique_au_choix"],
   },
   competences: {

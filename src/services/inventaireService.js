@@ -91,7 +91,12 @@ export async function desequiper(characterId, itemId) {
 // Reconstruit fiche.mecanique.equipement depuis les objets équipés.
 export async function recomposerEquipement(characterId) {
   const rows = (await listerInventaire(characterId)).filter((r) => r.equipe);
-  const armure = rows.find((r) => r.categorie === "armure" && r.ref && ARMURES[r.ref])?.ref || null;
+  // Le bouclier est stocké en categorie "armure" avec ref "bouclier" : il figure
+  // désormais dans ARMURES (categorie "bouclier") et doit être explicitement
+  // écarté ici, sinon il pourrait être retenu comme armure portée et fausser la CA.
+  const armure = rows.find(
+    (r) => r.categorie === "armure" && r.ref && ARMURES[r.ref] && ARMURES[r.ref].categorie !== "bouclier"
+  )?.ref || null;
   const bouclier = rows.some((r) => r.ref === "bouclier");
   const armes = rows
     .filter((r) => r.categorie === "arme" && r.ref && ARMES[r.ref])

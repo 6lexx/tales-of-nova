@@ -160,7 +160,7 @@ export const SOUS_RACES = {
         description: "Vous maîtrisez la rapière, l'épée courte et l'arbalète de poing.",
         effet: {
           type: "maitrise_additionnelle",
-          armes: ["rapiere", "epee_courte", "arbalete_de_poing"],
+          armes: ["rapiere", "epee_courte", "arbalete_poing"],
         },
       },
     },

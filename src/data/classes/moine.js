@@ -267,7 +267,7 @@ export const MOINE = {
   sauvegardes: ["force", "dexterite"],
   maitrises: {
     armures: [],
-    armes: ["simples", "epees_courtes"],
+    armes: ["simples", "epee_courte"],
     outils: ["un_outil_artisan_ou_instrument_au_choix"],
   },
   competences: {

@@ -22,6 +22,12 @@ export const ARMURES = {
   cotte_mailles:   { ref: "cotte_mailles",   nom: "Cotte de mailles",      categorie: "lourde",        ca: 16, forceMin: 13, discretionDesavantage: true },
   clibanion:       { ref: "clibanion",       nom: "Clibanion",             categorie: "lourde",        ca: 17, forceMin: 15, discretionDesavantage: true },
   harnois:         { ref: "harnois",         nom: "Harnois",               categorie: "lourde",        ca: 18, forceMin: 15, discretionDesavantage: true },
+  // Bouclier : catégorie à part. `ca` reste null (ce n'est pas une CA de base) ;
+  // le bonus est porté par `bonusCa` et par BONUS_BOUCLIER ci-dessous.
+  // ATTENTION : tout consommateur qui cherche « l'armure portée » dans ARMURES
+  // doit exclure categorie === "bouclier" (cf. recomposerEquipement dans
+  // src/services/inventaireService.js).
+  bouclier:        { ref: "bouclier",        nom: "Bouclier",              categorie: "bouclier",      ca: null, bonusCa: 2 },
 };
 
 export const BONUS_BOUCLIER = 2;

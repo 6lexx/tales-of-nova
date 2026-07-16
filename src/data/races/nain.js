@@ -107,7 +107,7 @@ export const SOUS_RACES = {
         nom: "Entraînement nain à l'armure",
         type: "passif",
         description: "Vous maîtrisez les armures légères et intermédiaires.",
-        effet: { type: "maitrise_additionnelle", armures: ["legeres", "intermediaires"] },
+        effet: { type: "maitrise_additionnelle", armures: ["legere", "intermediaire"] },
       },
     },
   },
