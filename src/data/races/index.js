@@ -50,6 +50,51 @@ export const RACES_MODULES = {
   [TIEFFELIN.id]: tieffelin,
 };
 
+/* Garde-fou : chaque race importée doit se retrouver dans RACES et dans
+   RACES_MODULES. Une ligne oubliée, ou deux races partageant le même `id`
+   (la seconde écrase silencieusement la première), ne produit aucune erreur JS :
+   la race disparaît simplement du jeu. On le détecte ici, à la source, plutôt
+   que de laisser chaque écran le découvrir à sa façon. */
+const TOUTES_LES_RACES = [NAIN, ELFE, HALFELIN, HUMAIN, DRAKEIDE, GNOME, DEMI_ELFE, DEMI_ORC, TIEFFELIN];
+const FICHIERS_RACES = ["nain", "elfe", "halfelin", "humain", "drakeide", "gnome", "demi_elfe", "demi_orc", "tieffelin"];
+{
+  // Collisions d'id : deux fichiers différents déclarant le même `id`.
+  const parId = new Map();
+  TOUTES_LES_RACES.forEach((r, i) => {
+    if (!r?.id) return;
+    if (!parId.has(r.id)) parId.set(r.id, []);
+    parId.get(r.id).push(`${FICHIERS_RACES[i]}.js (nom: ${JSON.stringify(r.nom)})`);
+  });
+  for (const [id, sources] of parId) {
+    if (sources.length > 1) {
+      console.error(
+        `[races/index.js] COLLISION D'ID : ${sources.length} fichiers déclarent id="${id}" → ${sources.join(" ET ")}.\n`
+        + `Le dernier écrase le premier : une race est perdue, et l'autre répond sous une identité qui n'est pas la sienne.\n`
+        + `→ Corrige le champ \`id\` du fichier fautif. Chaque fichier de race doit porter un id unique `
+        + `("nain", "elfe", "halfelin", "humain", "drakeide", "gnome", "demi-elfe", "orc", "tieffelin").`
+      );
+    }
+  }
+  // Races sans id, ou absentes d'un des deux objets.
+  const sansId = TOUTES_LES_RACES.filter((r) => !r?.id).map((r, i) => FICHIERS_RACES[i]);
+  if (sansId.length) {
+    console.error(`[races/index.js] Race(s) sans champ \`id\` : ${sansId.join(", ")}. Le fichier doit exporter un objet avec \`id\` et \`nom\`.`);
+  }
+  const manquantes = TOUTES_LES_RACES.filter((r) => r?.id && RACES[r.id] !== r).map((r) => r.nom ?? "?");
+  const sansModule = TOUTES_LES_RACES.filter((r) => r?.id && !RACES_MODULES[r.id]).map((r) => r.nom ?? "?");
+  if (manquantes.length || sansModule.length) {
+    const details = [
+      manquantes.length ? `absente(s) de RACES : ${manquantes.join(", ")}` : null,
+      sansModule.length ? `absente(s) de RACES_MODULES : ${sansModule.join(", ")}` : null,
+    ].filter(Boolean).join(" | ");
+    console.error(
+      `[races/index.js] ${TOUTES_LES_RACES.length} races importées mais ${Object.keys(RACES).length} exposées — ${details}.\n`
+      + `→ Si une collision d'id est signalée ci-dessus, c'est elle la cause : la race « absente » a été `
+      + `écrasée par une autre, ce n'est pas sa ligne dans RACES qui manque.`
+    );
+  }
+}
+
 /** Définition racine d'une race, ou null. */
 export const race = (raceId) => RACES[raceId] ?? null;
 

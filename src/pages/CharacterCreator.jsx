@@ -67,22 +67,77 @@ const ESPECE_DESC = {
   gnome:       "Petits inventeurs rusés et curieux.",
 };
 
+/* Ordre d'AFFICHAGE. Cette liste ne décide pas de ce qui existe : elle ne fait
+   que trier. Une race absente d'ici s'affiche quand même, à la fin ; une race
+   citée ici mais absente de RACES est simplement ignorée.
+   Historique : cette liste pilotait un .map() sur RACES[rid]. Un id qui ne
+   correspondait pas (id modifié dans un fichier de race) faisait planter toute
+   la page sur `r.bonusLibres`. Deux listes d'ids en parallèle, l'une pouvant
+   contredire l'autre : c'était la faute de conception, pas l'id. */
 const ORDRE_ESPECES = ["humain", "elfe", "nain", "orc", "tieffelin", "demi-elfe", "halfelin", "drakeide", "gnome"];
+const rangEspece = (rid) => {
+  const i = ORDRE_ESPECES.indexOf(rid);
+  return i === -1 ? ORDRE_ESPECES.length : i;
+};
 
-const ESPECES = ORDRE_ESPECES.map((rid) => {
-  const r = Races.RACES[rid];
-  const libres = r.bonusLibres ? ` · +1 au choix ×${r.bonusLibres}` : "";
-  return {
-    id: r.id,
-    nom: r.nom,
-    desc: ESPECE_DESC[rid] ?? "",
-    bonus: fmtBonus(r.bonusStats) + libres,
-    // Deux premiers traits de la race, à titre d'aperçu.
-    trait: Races.traitsComplets(rid).slice(0, 2).map((t) => t.nom).join(" · "),
-    bonusStats: r.bonusStats,
-    bonusLibres: r.bonusLibres ?? 0,
-  };
-});
+/* Les espèces sont dérivées des clés réelles de RACES. Un id inattendu ne peut
+   donc pas planter le rendu. En revanche une entrée invalide est ÉCARTÉE — et
+   une mise à l'écart muette est un piège pire qu'un crash : la race disparaît
+   de l'écran sans explication. Tout rejet est donc collecté et signalé. */
+const ESPECES_REJETEES = [];
+const ESPECES = Object.values(Races.RACES)
+  .filter((r) => {
+    if (r && r.id && r.nom) return true;
+    ESPECES_REJETEES.push(r);
+    return false;
+  })
+  .sort((a, b) => rangEspece(a.id) - rangEspece(b.id) || a.nom.localeCompare(b.nom, "fr"))
+  .map((r) => {
+    const libres = r.bonusLibres ? ` · +1 au choix ×${r.bonusLibres}` : "";
+    return {
+      id: r.id,
+      nom: r.nom,
+      desc: ESPECE_DESC[r.id] ?? "",
+      bonus: fmtBonus(r.bonusStats ?? {}) + libres,
+      // Deux premiers traits de la race, à titre d'aperçu.
+      trait: Races.traitsComplets(r.id).slice(0, 2).map((t) => t.nom).join(" · "),
+      bonusStats: r.bonusStats ?? {},
+      bonusLibres: r.bonusLibres ?? 0,
+    };
+  });
+
+/* Diagnostic (dev uniquement). Deux symptômes distincts :
+   - une entrée de RACES sans `id`/`nom` → écartée du rendu ;
+   - un id attendu (ordre d'affichage, ESPECE_DESC) absent de RACES.
+   Les deux se traduisent par une race manquante à l'écran, sans erreur JS. */
+if (import.meta.env?.DEV) {
+  for (const r of ESPECES_REJETEES) {
+    console.error(
+      `[CharacterCreator] Espèce écartée du créateur : entrée de RACES invalide `
+      + `(id=${JSON.stringify(r?.id)}, nom=${JSON.stringify(r?.nom)}).\n`
+      + `→ Le fichier src/data/races/*.js correspondant doit exporter un objet avec `
+      + `un champ \`id\` ET un champ \`nom\`, puis \`export default\`.`, r
+    );
+  }
+  const exposes = Object.keys(Races.RACES);
+  const attendus = [...new Set([...ORDRE_ESPECES, ...Object.keys(ESPECE_DESC)])];
+  const orphelins = attendus.filter((i) => !exposes.includes(i));
+  if (orphelins.length) {
+    console.error(
+      `[CharacterCreator] Espèce(s) attendue(s) mais absente(s) de RACES : ${orphelins.join(", ")}\n`
+      + `Ids réellement exposés : ${exposes.join(", ")}\n`
+      + `→ Vérifie le champ \`id\` dans src/data/races/*.js. L'id doit rester celui d'ESPECES `
+      + `("drakeide", "demi-elfe" avec un tiret, "orc" pour le Demi-orc) : il est INDÉPENDANT `
+      + `du nom de fichier et c'est lui qui est stocké en base.`
+    );
+  }
+  if (ESPECES.length !== ORDRE_ESPECES.length) {
+    console.error(
+      `[CharacterCreator] ${ESPECES.length} espèce(s) affichée(s) sur ${ORDRE_ESPECES.length} attendues. `
+      + `Affichées : ${ESPECES.map((e) => e.id).join(", ")}`
+    );
+  }
+}
 
 const CLASSES = [
   { id: "guerrier", nom: "Guerrier", icon: Swords, de: 10, prim: "FOR / DEX", desc: "Maître des armes et des armures.", sauv: ["FOR", "CON"] },
@@ -718,7 +773,7 @@ export default function CharacterCreator() {
                       <div style={S.tagRow}>
                         {traitsRace.map((t) => (
                           <span key={`${t.origine}:${t.id}`} title={t.description}
-                            style={{ ...S.tag, cursor: "help", borderColor: t.origine === "sous_race" ? C.violetDim : C.border }}>
+                            style={{ ...S.tag, cursor: "help", border: `1px solid ${t.origine === "sous_race" ? C.violetDim : C.border}` }}>
                             {t.nom}
                           </span>
                         ))}
@@ -1358,7 +1413,7 @@ const S = {
 
   grid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(168px, 1fr))", gap: 11 },
   card: { textAlign: "left", padding: 14, background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 10, display: "flex", flexDirection: "column", gap: 6 },
-  cardActive: { borderColor: C.gold, background: "#1a160f", boxShadow: `0 0 0 1px ${C.gold}, 0 6px 18px ${C.goldDim}33` },
+  cardActive: { border: `1px solid ${C.gold}`, background: "#1a160f", boxShadow: `0 0 0 1px ${C.gold}, 0 6px 18px ${C.goldDim}33` },
   cardHead: { display: "flex", alignItems: "center", gap: 8 },
   cardTitle: { fontSize: 15.5, fontWeight: 600, fontFamily: "'Cinzel', serif", color: C.textPrime },
   cardDesc: { margin: 0, fontSize: 12.5, color: C.textSub, lineHeight: 1.45 },
@@ -1367,7 +1422,7 @@ const S = {
 
   portraitRow: { display: "flex", gap: 12, flexWrap: "wrap" },
   portrait: { width: 62, height: 62, borderRadius: 12, background: C.bgCard, border: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "center" },
-  portraitActive: { borderColor: C.gold, boxShadow: `0 0 0 1px ${C.gold}` },
+  portraitActive: { border: `1px solid ${C.gold}`, boxShadow: `0 0 0 1px ${C.gold}` },
 
   color: { width: "100%", height: 42, border: `1px solid ${C.border}`, borderRadius: 8, background: C.bgInput, padding: 3, cursor: "pointer" },
 
@@ -1379,7 +1434,7 @@ const S = {
   libresBox: { padding: "14px 16px", background: C.bgCard, border: `1px solid ${C.borderGlow}`, borderRadius: 10 },
   methodeRow: { display: "flex", gap: 8 },
   methodeBtn: { flex: 1, padding: "10px 12px", borderRadius: 9, background: C.bgCard, border: `1px solid ${C.border}`, color: C.textSub, fontSize: 13, fontWeight: 500, fontFamily: "'Inter', sans-serif" },
-  methodeBtnOn: { borderColor: C.gold, background: "#1a160f", color: C.gold },
+  methodeBtnOn: { border: `1px solid ${C.gold}`, background: "#1a160f", color: C.gold },
   statSelect: { width: 72, padding: "7px 8px", background: C.bgInput, border: `1px solid ${C.border}`, borderRadius: 8, color: C.textPrime, fontSize: 15, fontFamily: "'Inter', sans-serif", textAlign: "center" },
   statImportante: { fontSize: 10, color: C.gold },
   libresLbl: { fontSize: 12.5, color: C.teal, marginBottom: 10, fontFamily: "'Cinzel', serif", letterSpacing: 1 },
@@ -1405,13 +1460,13 @@ const S = {
   skillGroup: { background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 10, padding: 14 },
   skillGroupTitle: { fontSize: 11, letterSpacing: 1.5, textTransform: "uppercase", color: C.violet, marginBottom: 10, fontFamily: "'Cinzel', serif" },
   skillChip: { display: "block", width: "100%", textAlign: "left", padding: "8px 11px", marginBottom: 6, background: C.bgInput, border: `1px solid ${C.border}`, borderRadius: 7, color: C.textSub, fontSize: 13 },
-  skillChipOn: { background: "#1a160f", borderColor: C.gold, color: C.textPrime },
+  skillChipOn: { background: "#1a160f", border: `1px solid ${C.gold}`, color: C.textPrime },
   dot: { display: "inline-block", width: 7, height: 7, borderRadius: "50%", background: C.gold, marginRight: 8, verticalAlign: "1px" },
 
   tagRow: { display: "flex", flexWrap: "wrap", gap: 8 },
   tag: { padding: "8px 14px", borderRadius: 20, background: C.bgCard, border: `1px solid ${C.border}`, color: C.textSub, fontSize: 13 },
-  tagOn: { background: C.violetDim, borderColor: C.violet, color: C.textPrime },
-  tagOnGold: { background: "#1a160f", borderColor: C.gold, color: C.gold },
+  tagOn: { background: C.violetDim, border: `1px solid ${C.violet}`, color: C.textPrime },
+  tagOnGold: { background: "#1a160f", border: `1px solid ${C.gold}`, color: C.gold },
   tagCount: { fontSize: 11.5, color: C.textMuted, marginTop: 8 },
 
   aiBanner: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, padding: "16px 18px", background: "linear-gradient(135deg, #1a1228 0%, #14101c 100%)", border: `1px solid ${C.borderGlow}`, borderRadius: 12 },
